@@ -95,6 +95,8 @@ pub fn run() {
             gamepad::update_virtual_gamepad,
             gamepad::unplug_virtual_gamepad,
             gamepad::unplug_all_virtual_gamepads,
+            gamepad::get_xinput_gamepads,
+            gamepad::test_gamepad_vibration,
             gamepad::install_vigem_driver,
             native_viewer::start_native_viewer,
             native_viewer::add_native_viewer_candidate,

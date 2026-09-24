@@ -21,10 +21,163 @@ pub struct GamepadStatus {
     pub active_slots: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct XInputButtonSnapshot {
+    pub pressed: bool,
+    pub value: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct XInputGamepadSnapshot {
+    pub index: u32,
+    pub id: String,
+    pub connected: bool,
+    pub buttons: Vec<XInputButtonSnapshot>,
+    pub axes: Vec<f32>,
+}
+
 #[cfg(windows)]
 mod native {
     use super::*;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::thread;
+    use std::time::Duration;
     use vigem_client::{Client, TargetId, XButtons, XGamepad, Xbox360Wired};
+
+    #[repr(C)]
+    struct XInputVibration {
+        left_motor_speed: u16,
+        right_motor_speed: u16,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct XInputGamepadState {
+        buttons: u16,
+        left_trigger: u8,
+        right_trigger: u8,
+        left_thumb_x: i16,
+        left_thumb_y: i16,
+        right_thumb_x: i16,
+        right_thumb_y: i16,
+    }
+
+    #[repr(C)]
+    #[derive(Default)]
+    struct XInputState {
+        packet_number: u32,
+        gamepad: XInputGamepadState,
+    }
+
+    #[link(name = "xinput")]
+    unsafe extern "system" {
+        fn XInputSetState(user_index: u32, vibration: *const XInputVibration) -> u32;
+        fn XInputGetState(user_index: u32, state: *mut XInputState) -> u32;
+    }
+
+    static RUMBLE_GENERATIONS: [AtomicU64; 4] = [
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+        AtomicU64::new(0),
+    ];
+
+    pub fn connected_xinput_gamepads() -> Vec<XInputGamepadSnapshot> {
+        (0..4)
+            .filter_map(|user_index| {
+                let mut state = XInputState::default();
+                if unsafe { XInputGetState(user_index, &mut state) } != 0 {
+                    return None;
+                }
+
+                let gamepad = state.gamepad;
+                let is_pressed = |mask: u16| gamepad.buttons & mask != 0;
+                let button = |pressed: bool| XInputButtonSnapshot {
+                    pressed,
+                    value: if pressed { 1.0 } else { 0.0 },
+                };
+                let trigger = |value: u8| XInputButtonSnapshot {
+                    pressed: value >= 30,
+                    value: value as f32 / u8::MAX as f32,
+                };
+                let normalize_axis = |value: i16| (value as f32 / i16::MAX as f32).clamp(-1.0, 1.0);
+
+                Some(XInputGamepadSnapshot {
+                    index: user_index,
+                    id: format!("Controle Xbox {} (Windows XInput)", user_index + 1),
+                    connected: true,
+                    buttons: vec![
+                        button(is_pressed(0x1000)), // A
+                        button(is_pressed(0x2000)), // B
+                        button(is_pressed(0x4000)), // X
+                        button(is_pressed(0x8000)), // Y
+                        button(is_pressed(0x0100)), // LB
+                        button(is_pressed(0x0200)), // RB
+                        trigger(gamepad.left_trigger),
+                        trigger(gamepad.right_trigger),
+                        button(is_pressed(0x0020)), // Back
+                        button(is_pressed(0x0010)), // Start
+                        button(is_pressed(0x0040)), // L3
+                        button(is_pressed(0x0080)), // R3
+                        button(is_pressed(0x0001)), // Up
+                        button(is_pressed(0x0002)), // Down
+                        button(is_pressed(0x0004)), // Left
+                        button(is_pressed(0x0008)), // Right
+                        button(false),              // Guide is not reported by XInputGetState
+                    ],
+                    axes: vec![
+                        normalize_axis(gamepad.left_thumb_x),
+                        -normalize_axis(gamepad.left_thumb_y),
+                        normalize_axis(gamepad.right_thumb_x),
+                        -normalize_axis(gamepad.right_thumb_y),
+                    ],
+                })
+            })
+            .collect()
+    }
+
+    pub fn test_vibration(
+        user_index: u32,
+        strong_magnitude: f32,
+        weak_magnitude: f32,
+        duration_ms: u64,
+    ) -> Result<(), String> {
+        let generation =
+            RUMBLE_GENERATIONS[user_index as usize].fetch_add(1, Ordering::SeqCst) + 1;
+        let vibration = XInputVibration {
+            left_motor_speed: (strong_magnitude * u16::MAX as f32).round() as u16,
+            right_motor_speed: (weak_magnitude * u16::MAX as f32).round() as u16,
+        };
+        let result = unsafe { XInputSetState(user_index, &vibration) };
+        if result != 0 {
+            let stopped = XInputVibration {
+                left_motor_speed: 0,
+                right_motor_speed: 0,
+            };
+            let _ = unsafe { XInputSetState(user_index, &stopped) };
+            return Err(if result == 1167 {
+                format!("O XInput não detectou um controle no índice {user_index}.")
+            } else {
+                format!("Falha ao iniciar a vibração XInput (código {result}).")
+            });
+        }
+
+        thread::spawn(move || {
+            thread::sleep(Duration::from_millis(duration_ms));
+            if RUMBLE_GENERATIONS[user_index as usize].load(Ordering::SeqCst) != generation {
+                return;
+            }
+            let stopped = XInputVibration {
+                left_motor_speed: 0,
+                right_motor_speed: 0,
+            };
+            let stop_result = unsafe { XInputSetState(user_index, &stopped) };
+            if stop_result != 0 {
+                log::debug!("[Gamepad] XInputSetState ao parar vibração retornou {stop_result}");
+            }
+        });
+        Ok(())
+    }
 
     pub struct NativeGamepadManager {
         client: Option<Arc<Client>>,
@@ -297,6 +450,55 @@ pub fn unplug_virtual_gamepad(slot: u8) -> Result<(), String> {
 #[tauri::command]
 pub fn unplug_all_virtual_gamepads() -> Result<(), String> {
     with_manager(|mgr| mgr.unplug_all())
+}
+
+#[tauri::command]
+pub fn get_xinput_gamepads() -> Vec<XInputGamepadSnapshot> {
+    #[cfg(windows)]
+    {
+        native::connected_xinput_gamepads()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
+}
+
+#[tauri::command]
+pub fn test_gamepad_vibration(
+    gamepad_index: u32,
+    strong_magnitude: f64,
+    weak_magnitude: f64,
+    duration_ms: u64,
+) -> Result<(), String> {
+    if gamepad_index > 3 {
+        return Err("O índice do controle deve estar entre 0 e 3 no Windows.".to_string());
+    }
+    if !strong_magnitude.is_finite()
+        || !weak_magnitude.is_finite()
+        || !(0.0..=1.0).contains(&strong_magnitude)
+        || !(0.0..=1.0).contains(&weak_magnitude)
+    {
+        return Err("A intensidade da vibração deve estar entre 0 e 1.".to_string());
+    }
+    if duration_ms == 0 || duration_ms > 2_000 {
+        return Err("A duração da vibração deve estar entre 1 e 2000 ms.".to_string());
+    }
+
+    #[cfg(windows)]
+    {
+        native::test_vibration(
+            gamepad_index,
+            strong_magnitude as f32,
+            weak_magnitude as f32,
+            duration_ms,
+        )
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (gamepad_index, strong_magnitude, weak_magnitude, duration_ms);
+        Err("A vibração nativa só está disponível no Windows.".to_string())
+    }
 }
 
 #[tauri::command]

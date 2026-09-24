@@ -54,6 +54,19 @@ export function unplugAllVirtualGamepads() {
     return invokeDesktopCommand('unplug_all_virtual_gamepads', {}, { omitArgs: true });
 }
 
+export function testGamepadVibration(gamepadIndex, strongMagnitude, weakMagnitude, durationMs) {
+    return invokeDesktopCommand('test_gamepad_vibration', {
+        gamepadIndex: Number(gamepadIndex),
+        strongMagnitude: Number(strongMagnitude),
+        weakMagnitude: Number(weakMagnitude),
+        durationMs: Number(durationMs)
+    });
+}
+
+export function getXInputGamepads() {
+    return invokeDesktopCommand('get_xinput_gamepads', {}, { omitArgs: true });
+}
+
 export function checkVirtualGamepadDriver() {
     return invokeDesktopCommand('check_gamepad_driver_status', {}, { omitArgs: true });
 }
