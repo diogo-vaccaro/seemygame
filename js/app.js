@@ -58,6 +58,7 @@ import {
   listenNativeCaptureBridge
 } from './desktop.js';
 import { NativeCaptureProvider } from './capture.js';
+import { requestBrowserDisplayMedia } from './browser-capture.js';
 import { chatManager } from './chat.js';
 import { voiceManager } from './voice.js';
 import { DiscordUIController } from './discord-ui.js';
@@ -148,6 +149,7 @@ const directPendingCandidates = new Map();     // HostId -> Array de candidatos 
 const directClipStartTimers = new Map();       // HostId -> timerId de debounce para início do clipping
 const activeNativeViewerPeers = new Set();     // ViewerId -> Set de peers com ponte ativa no Rust (no transmissor)
 const activeDirectSignaling = new Set();       // ViewerId -> Set de peers em negociação (no transmissor)
+const processingDirectOffers = new Set();      // ViewerId -> Set de peers com oferta sendo processada (no transmissor)
 const lastShownQualityPerHost = new Map();     // HostId -> string da última qualidade notificada
 let unlistenNativeBridge = null;
 
@@ -816,19 +818,171 @@ export function setCustomIdRetryAttempts(val) {
   customIdRetryAttempts = Number(val) || 0;
 }
 
-if (typeof window !== 'undefined') {
-  const handlePageUnload = () => {
-    if (customIdRetryTimer) {
-      clearTimeout(customIdRetryTimer);
-      customIdRetryTimer = null;
+let isConfirmedReload = false;
+
+export function setConfirmedReload(val) {
+  isConfirmedReload = Boolean(val);
+}
+
+export function handlePageUnload() {
+  if (customIdRetryTimer) {
+    clearTimeout(customIdRetryTimer);
+    customIdRetryTimer = null;
+  }
+  if (roomManager && roomManager.isInRoom) {
+    try {
+      roomManager.leave();
+    } catch (e) {}
+  }
+  if (peer && !peer.destroyed) {
+    try {
+      peer.destroy();
+    } catch (e) {}
+  }
+}
+
+export function isReloadConfirmationPending() {
+  const modal = document.getElementById('reload-confirm-modal');
+  return Boolean(modal && modal.style.display !== 'none');
+}
+
+export function showReloadConfirmationModal() {
+  let modal = document.getElementById('reload-confirm-modal');
+  if (!modal && typeof document !== 'undefined') {
+    modal = document.createElement('div');
+    modal.id = 'reload-confirm-modal';
+    modal.className = 'modal-overlay';
+    modal.style.zIndex = '10002';
+    modal.setAttribute('role', 'dialog');
+    modal.setAttribute('aria-modal', 'true');
+    modal.innerHTML = `
+      <div class="modal-content" style="max-width: 460px; background: #141520; border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 14px; padding: 24px; box-shadow: 0 24px 48px rgba(0, 0, 0, 0.8);">
+        <h3 id="reload-confirm-title" style="color: #fbbf24; margin: 0 0 12px 0; font-size: 1.25rem; display: flex; align-items: center; gap: 8px;">
+          <span>⚠️</span> Recarregar a Sala?
+        </h3>
+        <p id="reload-confirm-desc" style="color: var(--text-muted); font-size: 13.5px; line-height: 1.55; margin: 0 0 16px 0;">
+          Você está em uma sessão ativa na sala. Recarregar agora interromperá conexões e transmissões temporariamente.
+        </p>
+        <div id="reload-confirm-warnings" style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 12px; font-size: 12.5px; line-height: 1.5; color: #fde68a; margin-bottom: 20px; display: none;"></div>
+        <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 10px;">
+          <button id="reload-confirm-cancel-btn" class="btn-secondary" style="padding: 9px 18px; font-size: 13px; border-radius: 8px; cursor: pointer;">
+            Continuar na Sala
+          </button>
+          <button id="reload-confirm-ok-btn" style="background: #ef4444; color: #fff; border: none; border-radius: 8px; padding: 9px 20px; font-size: 13px; font-weight: 600; cursor: pointer; transition: background 0.2s;">
+            Recarregar
+          </button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+  }
+
+  if (!modal) return;
+
+  const warningsEl = modal.querySelector('#reload-confirm-warnings');
+  const cancelBtn = modal.querySelector('#reload-confirm-cancel-btn');
+  const okBtn = modal.querySelector('#reload-confirm-ok-btn');
+
+  const isStreaming = Boolean(localStream || activeNativeCaptureProvider?.session?.sessionId || (roomManager && roomManager.localStreamingState?.isStreaming));
+  const isInVoice = Boolean(voiceManager && voiceManager.isInVoice);
+  const isHost = Boolean(isRoomMode() && roomManager && roomManager.isMaster);
+
+  const warnings = [];
+  if (isStreaming) {
+    warnings.push('🎮 Sua transmissão de tela ao vivo será encerrada para todos os espectadores.');
+  }
+  if (isInVoice) {
+    warnings.push('🎙️ Você será desconectado do canal de voz da sala.');
+  }
+  if (isHost) {
+    warnings.push('👑 Você continuará sendo o Host da sala ao reconectar.');
+  }
+
+  if (warningsEl) {
+    if (warnings.length > 0) {
+      warningsEl.innerHTML = warnings.map(w => `<div style="margin-bottom: 4px;">${w}</div>`).join('');
+      warningsEl.style.display = 'block';
+    } else {
+      warningsEl.style.display = 'none';
     }
-    if (peer && !peer.destroyed) {
-      try {
-        peer.destroy();
-      } catch (e) {}
+  }
+
+  const handleModalKeys = (e) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      hideReloadConfirmationModal();
     }
   };
-  window.addEventListener('beforeunload', handlePageUnload);
+
+  if (cancelBtn) {
+    cancelBtn.onclick = () => hideReloadConfirmationModal();
+    cancelBtn.focus?.();
+  }
+
+  if (okBtn) {
+    okBtn.onclick = () => {
+      isConfirmedReload = true;
+      hideReloadConfirmationModal();
+      handlePageUnload();
+      if (typeof window !== 'undefined' && window.location) {
+        window.location.reload();
+      }
+    };
+  }
+
+  window.addEventListener('keydown', handleModalKeys);
+  modal._smg_removeKeyHandler = () => window.removeEventListener('keydown', handleModalKeys);
+  modal.style.display = 'flex';
+}
+
+export function hideReloadConfirmationModal() {
+  const modal = document.getElementById('reload-confirm-modal');
+  if (modal) {
+    modal.style.display = 'none';
+    if (typeof modal._smg_removeKeyHandler === 'function') {
+      modal._smg_removeKeyHandler();
+      modal._smg_removeKeyHandler = null;
+    }
+  }
+}
+
+export function handleReloadKeypress(e) {
+  if (!e) return false;
+  const isF5 = e.key === 'F5' || e.code === 'F5';
+  const isCtrlR = (e.ctrlKey || e.metaKey) && (e.key === 'r' || e.key === 'R' || e.code === 'KeyR');
+  if (!isF5 && !isCtrlR) return false;
+
+  const isStreaming = Boolean(localStream || activeNativeCaptureProvider?.session?.sessionId || (roomManager && roomManager.localStreamingState?.isStreaming));
+  const isInVoice = Boolean(voiceManager && voiceManager.isInVoice);
+  const isConnected = Boolean(connectedViewers.size > 0 || watchingHosts.size > 0 || (roomManager && roomManager.members.size > 1));
+  const isRoom = isRoomMode();
+
+  if (isStreaming || isInVoice || isConnected || isRoom) {
+    e.preventDefault();
+    if (typeof e.stopPropagation === 'function') e.stopPropagation();
+    showReloadConfirmationModal();
+    return true;
+  }
+  return false;
+}
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('keydown', handleReloadKeypress, true);
+
+  window.addEventListener('beforeunload', (e) => {
+    if (isConfirmedReload) {
+      handlePageUnload();
+      return;
+    }
+    const isStreaming = Boolean(localStream || activeNativeCaptureProvider?.session?.sessionId || (roomManager && roomManager.localStreamingState?.isStreaming));
+    if (isStreaming) {
+      e.preventDefault();
+      e.returnValue = 'Você está com uma transmissão de tela ativa. Deseja realmente sair ou recarregar?';
+      return e.returnValue;
+    }
+    handlePageUnload();
+  });
+
   window.addEventListener('pagehide', handlePageUnload);
 }
 
@@ -855,6 +1009,14 @@ export function setupRoomSession(id) {
   const userName = (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_user_name') : null) || 'Você';
   const masterId = getRoomMasterPeerId(roomId);
   const isMaster = (id === masterId);
+
+  if (typeof sessionStorage !== 'undefined') {
+    if (isMaster) {
+      sessionStorage.setItem('seemygame_room_master_' + roomId, 'true');
+    } else {
+      sessionStorage.removeItem('seemygame_room_master_' + roomId);
+    }
+  }
 
   if (!roomManager) {
     roomManager = new RoomManager({
@@ -928,6 +1090,7 @@ export function setupRoomSession(id) {
           let conn = connectedViewers.get(member.peerId) || roomManager.meshConnections.get(member.peerId);
           if (!conn && peer && !peer.destroyed) {
             conn = peer.connect(member.peerId, { reliable: true });
+            connectedViewers.set(member.peerId, conn);
             setupIncomingDataConnection(conn);
           }
           initiateMediaCallToViewer(member.peerId);
@@ -948,12 +1111,21 @@ export function setupRoomSession(id) {
       if (member && member.peerId) {
         authenticatedViewers.delete(member.peerId);
         activeDirectSignaling.delete(member.peerId);
-        activeNativeViewerPeers.delete(member.peerId);
+        if (activeNativeViewerPeers.has(member.peerId)) {
+          const sessionId = activeNativeCaptureProvider?.session?.sessionId;
+          if (sessionId && isDesktopApp()) {
+            closeNativeViewerPeer(sessionId, member.peerId).catch(() => {});
+          }
+          activeNativeViewerPeers.delete(member.peerId);
+        }
         const call = activeMediaCalls.get(member.peerId);
         if (call) {
           try { call.close(); } catch (_) {}
           activeMediaCalls.delete(member.peerId);
         }
+        connectedViewers.delete(member.peerId);
+        stopStatsMonitor(member.peerId);
+        updateViewerCountUI();
       }
     });
   }
@@ -1211,6 +1383,21 @@ export function initPeer() {
     } else if (err.type === 'unavailable-id') {
       const inRoom = isRoomMode();
       if (inRoom && isRoomMasterAttempt) {
+        const { roomId } = getRoomInfoFromUrl();
+        const wasMaster = typeof sessionStorage !== 'undefined' && sessionStorage.getItem('seemygame_room_master_' + roomId) === 'true';
+        if (wasMaster && customIdRetryAttempts < MAX_CUSTOM_ID_RETRIES) {
+          customIdRetryAttempts++;
+          const delay = Math.min(1000 * customIdRetryAttempts, 3000);
+          console.warn(`[Room] ID de coordenador retido pelo servidor de sinalização após recarga. Tentando reconectar ${customIdRetryAttempts}/${MAX_CUSTOM_ID_RETRIES} em ${delay}ms...`);
+          showToast(`Aguardando liberação do ID de Host da sala... (${customIdRetryAttempts}/${MAX_CUSTOM_ID_RETRIES})`, 'info', delay);
+          if (peer) {
+            try { peer.destroy(); } catch (e) {}
+            peer = null;
+          }
+          customIdRetryTimer = setTimeout(() => initPeer(), delay);
+          return;
+        }
+
         console.log('[Room] Master da sala já existe. Conectando como membro regular da sala...');
         isRoomMasterAttempt = false;
         if (peer) {
@@ -1865,6 +2052,11 @@ export function initDiscordFeatures() {
 
 // Controle: Transmissor recebe pedido de espectador
 function setupIncomingDataConnection(conn) {
+  if (!conn) return;
+  if (conn._smg_incoming_bound) return;
+  conn._smg_incoming_bound = true;
+  conn._smg_direct_signaling_bound = true;
+
   // Limite de espectadores simultâneos
   if (connectedViewers.size >= maxViewers && !connectedViewers.has(conn.peer)) {
     console.warn(`Rejeitando conexão de ${conn.peer}: limite de ${maxViewers} espectadores atingido.`);
@@ -2126,6 +2318,10 @@ async function handleStartDirectStream(data, conn) {
   // Limpa chamadas ou conexões anteriores com esse host
   const prevDirect = directViewerPeerConnections.get(hostId);
   if (prevDirect) {
+    if (['connecting', 'connected'].includes(prevDirect.connectionState)) {
+      console.log(`[DirectStream] RTCPeerConnection já ativa para ${hostId}, ignorando START_DIRECT_STREAM duplicado.`);
+      return;
+    }
     try { prevDirect.close(); } catch (e) {}
     directViewerPeerConnections.delete(hostId);
   }
@@ -2133,6 +2329,11 @@ async function handleStartDirectStream(data, conn) {
   if (prevCall) {
     try { prevCall.close(); } catch (e) {}
     activeMediaCalls.delete(hostId);
+  }
+  const hostCall = watchingHosts.get(hostId)?.call;
+  if (hostCall) {
+    try { hostCall.close(); } catch (e) {}
+    if (watchingHosts.get(hostId)) watchingHosts.get(hostId).call = null;
   }
 
   const hostData = watchingHosts.get(hostId);
@@ -2287,6 +2488,11 @@ async function handleDirectStreamOffer(data, conn) {
     activeDirectSignaling.delete(viewerId);
     return;
   }
+  if (processingDirectOffers.has(viewerId)) {
+    console.warn(`[DirectStream] Ignorando oferta duplicada já em processamento para espectador: ${viewerId}`);
+    return;
+  }
+  processingDirectOffers.add(viewerId);
   const sessionId = activeNativeCaptureProvider.session.sessionId;
   try {
     const peerConfig = getPeerConfig();
@@ -2320,6 +2526,8 @@ async function handleDirectStreamOffer(data, conn) {
   } catch (err) {
     activeDirectSignaling.delete(viewerId);
     console.error(`[DirectStream] Erro ao criar peer nativo para espectador ${viewerId}:`, err);
+  } finally {
+    processingDirectOffers.delete(viewerId);
   }
 }
 
@@ -2329,6 +2537,10 @@ async function handleDirectStreamAnswer(data, conn) {
   const pc = directViewerPeerConnections.get(hostId);
   if (!pc) {
     console.warn(`[DirectStream] Nenhuma RTCPeerConnection encontrada para host ${hostId}`);
+    return;
+  }
+  if (pc.signalingState !== 'have-local-offer') {
+    console.log(`[DirectStream] Ignorando DIRECT_STREAM_ANSWER para ${hostId} (signalingState atual: ${pc.signalingState})`);
     return;
   }
   try {
@@ -2769,10 +2981,15 @@ export function watchFriend(rawTargetId) {
     conn.on('open', handleOpen);
   }
 
+  if (conn._smg_watch_bound) {
+    return;
+  }
+  conn._smg_watch_bound = true;
+
   conn.on('data', (data) => {
     if (!data || typeof data !== 'object') return;
 
-    if (handleDirectStreamSignaling(data, conn)) {
+    if (!conn._smg_direct_signaling_bound && handleDirectStreamSignaling(data, conn)) {
       return;
     }
 
@@ -2962,7 +3179,6 @@ export async function startLocalStream(options = {}) {
 
   let capturedDisplayStream = null;
   let capturedMicStream = null;
-  let audioFailedReason = null;
 
   try {
     const wantSystemAudio = (audioMode === 'system' || audioMode === 'process');
@@ -2989,25 +3205,12 @@ export async function startLocalStream(options = {}) {
       activeNativeCaptureProvider = nativeProvider;
     } else {
       try {
-        const displayMediaConstraints = {
-          video: {
-            ...videoConstraints,
-            ...(options.displaySurface ? { displaySurface: options.displaySurface } : {})
-          },
-          audio: wantSystemAudio ? {
-            autoGainControl: false,
-            echoCancellation: false,
-            noiseSuppression: false,
-            channelCount: 2
-          } : false,
-          systemAudio: wantSystemAudio ? 'include' : 'exclude',
-          windowAudio: wantSystemAudio ? 'include' : 'exclude',
-          selfBrowserSurface: 'exclude',
-          surfaceSwitching: 'include',
-          ...(options.monitorTypeSurfaces ? { monitorTypeSurfaces: options.monitorTypeSurfaces } : {})
-        };
-        // Tentativa 1: Captura com áudio se solicitado
-        capturedDisplayStream = await navigator.mediaDevices.getDisplayMedia(displayMediaConstraints);
+        capturedDisplayStream = await requestBrowserDisplayMedia({
+          video: videoConstraints,
+          audioMode,
+          displaySurface: options.displaySurface,
+          monitorTypeSurfaces: options.monitorTypeSurfaces
+        });
         console.log('[Capture Browser] Trilhas capturadas:', {
           video: capturedDisplayStream.getVideoTracks().map(t => ({ id: t.id, label: t.label, enabled: t.enabled, readyState: t.readyState, settings: t.getSettings?.() })),
           audio: capturedDisplayStream.getAudioTracks().map(t => ({ id: t.id, label: t.label, enabled: t.enabled, readyState: t.readyState, settings: t.getSettings?.() }))
@@ -3018,25 +3221,7 @@ export async function startLocalStream(options = {}) {
           return;
         }
 
-        // Fallback gracioso se o loopback de áudio for rejeitado pelo driver do fone/Windows
-        if (wantSystemAudio && (captureErr.name === 'NotReadableError' || captureErr.message?.toLowerCase().includes('audio'))) {
-          console.warn('Loopback de áudio rejeitado pelo driver/Windows. Fallback apenas vídeo...', captureErr);
-          audioFailedReason = 'O driver de áudio rejeitou a captura em loopback.';
-          showToast('Aviso: Áudio do sistema indisponível. Continuando apenas com vídeo...', 'info', 5000);
-
-          capturedDisplayStream = await navigator.mediaDevices.getDisplayMedia({
-            video: {
-              ...videoConstraints,
-              ...(options.displaySurface ? { displaySurface: options.displaySurface } : {})
-            },
-            audio: false,
-            selfBrowserSurface: 'exclude',
-            surfaceSwitching: 'include',
-            ...(options.monitorTypeSurfaces ? { monitorTypeSurfaces: options.monitorTypeSurfaces } : {})
-          });
-        } else {
-          throw captureErr;
-        }
+        throw captureErr;
       }
     }
 
@@ -3087,13 +3272,11 @@ export async function startLocalStream(options = {}) {
     }
 
     const hasAudio = localStream.getAudioTracks().length > 0;
-    if (audioFailedReason) {
-      showToast(`⚠ Áudio indisponível: ${audioFailedReason}`, 'info', 6000);
-    } else if (hasAudio) {
+    if (hasAudio) {
       const label = audioMode === 'mic' ? 'Microfone' : 'Áudio do jogo (sistema)';
       showToast(`${label} capturado com sucesso!`, 'success');
-    } else if (audioMode === 'system') {
-      showToast('Transmissão iniciada (apenas vídeo). Dica: selecione "Tela inteira" e marque a caixa de áudio.', 'info');
+    } else if (wantSystemAudio) {
+      showToast('O navegador entregou apenas vídeo. Para incluir som, reinicie o compartilhamento e verifique a opção de áudio no seletor.', 'info', 6000);
     } else {
       showToast('Transmissão iniciada (modo sem áudio).', 'info');
     }

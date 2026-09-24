@@ -12,6 +12,8 @@ export const MASTER_SUFFIX = '_host';
 export const MAX_ROOM_MEMBERS = 16;
 export const MAX_PENDING_ROOM_CONNECTIONS = 16;
 export const MAX_ROOM_MESSAGE_BYTES = 64 * 1024;
+export const ROOM_HEARTBEAT_INTERVAL_MS = 3000;
+export const ROOM_MEMBER_TIMEOUT_MS = 10000;
 
 /**
  * Sanitiza o ID da sala para garantir caracteres seguros
@@ -109,6 +111,10 @@ export class RoomManager {
     // Peers autenticados: Set de peerIds
     this.authenticatedPeers = new Set();
 
+    this.heartbeatIntervalMs = ROOM_HEARTBEAT_INTERVAL_MS;
+    this.memberTimeoutMs = ROOM_MEMBER_TIMEOUT_MS;
+    this.heartbeatTimer = null;
+
     // Callbacks de eventos
     this.listeners = {
       memberJoined: new Set(),
@@ -169,10 +175,12 @@ export class RoomManager {
       isSpeaking: false,
       isStreaming: this.localStreamingState.isStreaming,
       streamDetails: this.localStreamingState.isStreaming ? { ...this.localStreamingState } : null,
-      joinedAt: Date.now()
+      joinedAt: Date.now(),
+      lastSeen: Date.now()
     };
 
     this.members.set(this.myPeerId, selfMember);
+    this._startHeartbeat();
     this.emit('membersUpdated', this.getMembersList());
     this.notifyState();
     return true;
@@ -220,12 +228,19 @@ export class RoomManager {
         isSpeaking: false,
         isStreaming: Boolean(initialInfo.isStreaming),
         streamDetails: initialInfo.streamDetails || null,
-        joinedAt: initialInfo.joinedAt || Date.now()
+        joinedAt: initialInfo.joinedAt || Date.now(),
+        lastSeen: Date.now()
       };
       this.members.set(peerId, newMember);
       this.emit('memberJoined', newMember);
       this.emit('membersUpdated', this.getMembersList());
       this.notifyState();
+    } else {
+      const existing = this.members.get(peerId);
+      existing.lastSeen = Date.now();
+      if (initialInfo.name) {
+        existing.name = sanitizeText(initialInfo.name).slice(0, 30);
+      }
     }
     return true;
   }
@@ -295,7 +310,8 @@ export class RoomManager {
       'ROOM_JOIN_REJECTED',
       'ROOM_SYNC_ALL',
       'ROOM_MEMBER_AUTH',
-      'ROOM_MEMBER_AUTH_ACCEPTED'
+      'ROOM_MEMBER_AUTH_ACCEPTED',
+      'ROOM_HEARTBEAT'
     ].includes(message.type);
     if (isJoinOrAuthMessage && message.roomId && sanitizeRoomId(message.roomId) !== this.roomId) return true;
     if (isJoinOrAuthMessage && !this.authenticatedPeers.has(senderPeerId) &&
@@ -305,6 +321,11 @@ export class RoomManager {
     if (!isJoinOrAuthMessage && !this.authenticatedPeers.has(senderPeerId)) {
       console.warn(`[RoomManager] Mensagem de peer não autenticado rejeitada: ${senderPeerId}`);
       return true;
+    }
+
+    const senderMember = this.members.get(senderPeerId);
+    if (senderMember) {
+      senderMember.lastSeen = Date.now();
     }
 
     switch (message.type) {
@@ -342,16 +363,31 @@ export class RoomManager {
           }
         }
 
+        const cleanName = typeof message.name === 'string' ? sanitizeText(message.name).slice(0, 30) : `Amigo ${senderPeerId.slice(-4)}`;
+        // Se um usuário com o mesmo nome relogou com novo ID, limpa a sessão antiga
+        for (const [existingPeerId, existingMember] of this.members.entries()) {
+          if (existingPeerId !== senderPeerId && existingMember.name === cleanName) {
+            console.log(`[RoomManager] Usuário "${cleanName}" relogou com novo ID (${senderPeerId}). Limpando sessão anterior (${existingPeerId}).`);
+            this.removeMember(existingPeerId);
+            this.broadcast({
+              type: 'ROOM_MEMBER_LEFT',
+              peerId: existingPeerId
+            }, senderPeerId);
+            break;
+          }
+        }
+
         // Sucesso na autenticação
         const memberInfo = {
           peerId: senderPeerId,
-          name: typeof message.name === 'string' ? sanitizeText(message.name).slice(0, 30) : `Amigo ${senderPeerId.slice(-4)}`,
+          name: cleanName,
           isMaster: false,
           isMuted: Boolean(message.isMuted),
           isDeafened: Boolean(message.isDeafened),
           isStreaming: Boolean(message.isStreaming),
           streamDetails: message.streamDetails || null,
-          joinedAt: Date.now()
+          joinedAt: Date.now(),
+          lastSeen: Date.now()
         };
 
         if (!this.promoteConnection(senderPeerId, conn, memberInfo)) return true;
@@ -594,6 +630,14 @@ export class RoomManager {
         return true;
       }
 
+      case 'ROOM_HEARTBEAT': {
+        const member = this.members.get(senderPeerId);
+        if (member) {
+          member.lastSeen = Date.now();
+        }
+        return true;
+      }
+
       default:
         return false;
     }
@@ -711,6 +755,8 @@ export class RoomManager {
   }
 
   leave() {
+    this._stopHeartbeat();
+
     this.broadcast({
       type: 'ROOM_MEMBER_LEFT',
       peerId: this.myPeerId
@@ -729,5 +775,71 @@ export class RoomManager {
     this.isInRoom = false;
     this.emit('roomClosed', { roomId: this.roomId });
     this.notifyState();
+  }
+
+  _startHeartbeat() {
+    this._stopHeartbeat();
+    if (typeof setInterval !== 'function') return;
+
+    this.heartbeatTimer = setInterval(() => {
+      this.performHealthCheck();
+    }, this.heartbeatIntervalMs);
+
+    if (this.heartbeatTimer && typeof this.heartbeatTimer.unref === 'function') {
+      try { this.heartbeatTimer.unref(); } catch (_) {}
+    }
+  }
+
+  _stopHeartbeat() {
+    if (this.heartbeatTimer) {
+      clearInterval(this.heartbeatTimer);
+      this.heartbeatTimer = null;
+    }
+  }
+
+  performHealthCheck() {
+    if (!this.isInRoom) return;
+
+    // 1. Envia batimento cardíaco para todas as conexões ativas na sala
+    this.broadcast({
+      type: 'ROOM_HEARTBEAT',
+      peerId: this.myPeerId,
+      timestamp: Date.now()
+    });
+
+    // 2. Checagem e poda de conexões mortas ou inativas
+    const now = Date.now();
+    const deadPeers = [];
+
+    this.members.forEach((member, peerId) => {
+      if (peerId === this.myPeerId) return;
+
+      const conn = this.meshConnections.get(peerId);
+      const isConnDead = conn && (
+        conn.open === false ||
+        conn.peerConnection?.connectionState === 'closed' ||
+        conn.peerConnection?.connectionState === 'failed' ||
+        conn.peerConnection?.iceConnectionState === 'closed' ||
+        conn.peerConnection?.iceConnectionState === 'failed'
+      );
+
+      const lastSeen = member.lastSeen || member.joinedAt || now;
+      const isTimedOut = (now - lastSeen) > this.memberTimeoutMs;
+
+      if (isConnDead || (this.isMaster && isTimedOut) || (peerId === this.masterPeerId && isTimedOut)) {
+        deadPeers.push(peerId);
+      }
+    });
+
+    deadPeers.forEach((peerId) => {
+      console.log(`[RoomManager] Removendo membro inativo/desconectado: ${peerId}`);
+      this.removeMember(peerId);
+      if (this.isMaster) {
+        this.broadcast({
+          type: 'ROOM_MEMBER_LEFT',
+          peerId
+        });
+      }
+    });
   }
 }
