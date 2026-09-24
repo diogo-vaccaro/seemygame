@@ -230,7 +230,7 @@ describe('Módulo: coop.js', () => {
     expect(upVal.y).toBe(-1);
   });
 
-  it('triggerGamepadRumble: aciona vibrationActuator.playEffect com parâmetros corretos', () => {
+  it('triggerGamepadRumble: aciona vibrationActuator.playEffect com parâmetros corretos', async () => {
     const mockPlayEffect = vi.fn().mockResolvedValue('complete');
     const originalGetGamepads = navigator.getGamepads;
 
@@ -243,7 +243,7 @@ describe('Módulo: coop.js', () => {
       }
     ]);
 
-    const result = triggerGamepadRumble(0.8, 0.4, 300, 0);
+    const result = await triggerGamepadRumble(0.8, 0.4, 300, 0);
     expect(result).toBe(true);
     expect(mockPlayEffect).toHaveBeenCalledWith('dual-rumble', {
       startDelay: 0,
