@@ -386,7 +386,7 @@ impl NativeWebRtcBridge {
         // Host ICE candidates are gathered asynchronously. Waiting briefly
         // lets the returned SDP be usable without requiring a second browser
         // round trip; trickled candidates are still emitted above.
-        let deadline = Instant::now() + Duration::from_secs(3);
+        let deadline = Instant::now() + Duration::from_millis(300);
         while Instant::now() < deadline {
             if self
                 .webrtc

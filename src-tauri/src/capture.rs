@@ -214,6 +214,40 @@ fn set_socket_buffer_size(socket: &UdpSocket, size_bytes: i32) {
     }
 }
 
+#[cfg(windows)]
+fn disable_connection_reset(socket: &UdpSocket) {
+    use std::os::windows::io::AsRawSocket;
+    unsafe extern "system" {
+        fn WSAIoctl(
+            s: usize,
+            dwIoControlCode: u32,
+            lpvInBuffer: *const std::ffi::c_void,
+            cbInBuffer: u32,
+            lpvOutBuffer: *mut std::ffi::c_void,
+            cbOutBuffer: u32,
+            lpcbBytesReturned: *mut u32,
+            lpOverlapped: *mut std::ffi::c_void,
+            lpCompletionRoutine: *mut std::ffi::c_void,
+        ) -> i32;
+    }
+    const SIO_UDP_CONNRESET: u32 = 0x9800000C;
+    let mut bytes_returned: u32 = 0;
+    let flag: u32 = 0;
+    unsafe {
+        let _ = WSAIoctl(
+            socket.as_raw_socket() as usize,
+            SIO_UDP_CONNRESET,
+            &flag as *const _ as *const std::ffi::c_void,
+            std::mem::size_of::<u32>() as u32,
+            std::ptr::null_mut(),
+            0,
+            &mut bytes_returned,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        );
+    }
+}
+
 #[cfg(not(test))]
 fn spawn_fanout_thread(
     label: &'static str,
@@ -223,6 +257,8 @@ fn spawn_fanout_thread(
 ) -> Result<JoinHandle<()>, String> {
     #[cfg(windows)]
     set_socket_buffer_size(&socket, 2 * 1024 * 1024);
+    #[cfg(windows)]
+    disable_connection_reset(&socket);
     socket
         .set_read_timeout(Some(Duration::from_millis(200)))
         .map_err(|e| format!("Falha ao configurar timeout no socket fan-out de {label}: {e}"))?;
@@ -230,6 +266,8 @@ fn spawn_fanout_thread(
         .map_err(|e| format!("Falha ao criar socket transmissor fan-out de {label}: {e}"))?;
     #[cfg(windows)]
     set_socket_buffer_size(&sender, 2 * 1024 * 1024);
+    #[cfg(windows)]
+    disable_connection_reset(&sender);
 
     let handle = thread::spawn(move || {
         let mut buf = [0u8; 65535];
@@ -1041,83 +1079,76 @@ pub fn create_native_viewer_peer(
     if viewer_id.is_empty() || viewer_id.len() > 128 {
         return Err("Identificador de espectador inválido".to_string());
     }
+    let (codec, audio_rtp_port_exists) = {
+        let mut guard = active_session()
+            .lock()
+            .map_err(|_| "Estado de captura indisponível".to_string())?;
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| "Nenhuma captura nativa ativa".to_string())?;
+        if session.state.session_id.as_deref() != Some(session_id.as_str()) {
+            return Err("Sessão de captura nativa inválida".to_string());
+        }
+        if session.state.state != "live" {
+            return Err("A captura nativa ainda não está ativa".to_string());
+        }
+
+        let fanout = session
+            .fanout
+            .as_ref()
+            .ok_or_else(|| "Fanout RTP não está ativo".to_string())?;
+        let worker = session
+            .worker
+            .as_ref()
+            .ok_or_else(|| "Worker nativo não está ativo".to_string())?;
+
+        // Se já existia uma ponte antiga para este espectador, encerre-a
+        if let Some(old) = session.viewer_bridges.remove(&viewer_id) {
+            fanout.remove_video_target(old.video_port);
+            if let Some(ap) = old.audio_port {
+                fanout.remove_audio_target(ap);
+            }
+            drop(old.bridge);
+        }
+
+        (worker.config.codec, worker.audio_rtp_port.is_some())
+    };
+
+    let viewer_video_port = allocate_ephemeral_port()?;
+    let viewer_audio_port = audio_rtp_port_exists
+        .then(allocate_ephemeral_port)
+        .transpose()?;
+
+    crate::system::write_debug_log(&format!(
+        "[Capture] Criando ponte direta webrtcbin para espectador {viewer_id} (video_port={viewer_video_port}, audio_port={viewer_audio_port:?})"
+    ));
+
+    let bridge = NativeWebRtcBridge::new(
+        Some(&app),
+        session_id.clone(),
+        Some(viewer_id.clone()),
+        viewer_video_port,
+        viewer_audio_port,
+        codec,
+        Some(&offer_sdp),
+        ice_servers.as_deref(),
+    )?;
+
+    let answer = bridge.create_answer(&offer_sdp)?;
+
     let mut guard = active_session()
         .lock()
         .map_err(|_| "Estado de captura indisponível".to_string())?;
     let session = guard
         .as_mut()
         .ok_or_else(|| "Nenhuma captura nativa ativa".to_string())?;
-    if session.state.session_id.as_deref() != Some(session_id.as_str()) {
-        return Err("Sessão de captura nativa inválida".to_string());
-    }
-    if session.state.state != "live" {
-        return Err("A captura nativa ainda não está ativa".to_string());
-    }
 
-    let fanout = session
-        .fanout
-        .as_ref()
-        .ok_or_else(|| "Fanout RTP não está ativo".to_string())?;
-    let worker = session
-        .worker
-        .as_ref()
-        .ok_or_else(|| "Worker nativo não está ativo".to_string())?;
-
-    // Se já existia uma ponte antiga para este espectador, encerre-a
-    if let Some(old) = session.viewer_bridges.remove(&viewer_id) {
-        fanout.remove_video_target(old.video_port);
-        if let Some(ap) = old.audio_port {
-            fanout.remove_audio_target(ap);
+    if let Some(fanout) = session.fanout.as_ref() {
+        fanout.add_video_target(viewer_video_port);
+        if let Some(ap) = viewer_audio_port {
+            fanout.add_audio_target(ap);
         }
-        drop(old.bridge);
     }
-
-    let viewer_video_port = allocate_ephemeral_port()?;
-    let viewer_audio_port = worker
-        .audio_rtp_port
-        .is_some()
-        .then(allocate_ephemeral_port)
-        .transpose()?;
-
-    fanout.add_video_target(viewer_video_port);
-    if let Some(ap) = viewer_audio_port {
-        fanout.add_audio_target(ap);
-    }
-
-    crate::system::write_debug_log(&format!(
-        "[Capture] Criando ponte direta webrtcbin para espectador {viewer_id} (video_port={viewer_video_port}, audio_port={viewer_audio_port:?})"
-    ));
-
-    let bridge = match NativeWebRtcBridge::new(
-        Some(&app),
-        session_id.clone(),
-        Some(viewer_id.clone()),
-        viewer_video_port,
-        viewer_audio_port,
-        worker.config.codec,
-        Some(&offer_sdp),
-        ice_servers.as_deref(),
-    ) {
-        Ok(b) => b,
-        Err(err) => {
-            fanout.remove_video_target(viewer_video_port);
-            if let Some(ap) = viewer_audio_port {
-                fanout.remove_audio_target(ap);
-            }
-            return Err(err);
-        }
-    };
-
-    let answer = match bridge.create_answer(&offer_sdp) {
-        Ok(a) => a,
-        Err(err) => {
-            fanout.remove_video_target(viewer_video_port);
-            if let Some(ap) = viewer_audio_port {
-                fanout.remove_audio_target(ap);
-            }
-            return Err(err);
-        }
-    };
 
     if let Some(pending) = session.pending_viewer_ice_candidates.remove(&viewer_id) {
         for (mline_index, cand) in pending {
