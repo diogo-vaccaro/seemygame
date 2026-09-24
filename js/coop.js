@@ -10,7 +10,9 @@ import {
   unplugVirtualGamepad,
   unplugAllVirtualGamepads,
   checkVirtualGamepadDriver,
-  installViGEmDriver
+  installViGEmDriver,
+  testGamepadVibration,
+  getXInputGamepads
 } from './desktop.js';
 
 // Estado do Co-op (Multi-Slot 1 a 4 Players)
@@ -90,21 +92,63 @@ export function applyRadialDeadzone(x, y, deadzone = 0.08) {
 /**
  * Dispara vibração háptica (rumble) no controle físico do convidado
  */
-export function triggerGamepadRumble(strongMagnitude = 0.5, weakMagnitude = 0.5, duration = 200, padIndex = 0) {
+export async function triggerGamepadRumble(strongMagnitude = 0.5, weakMagnitude = 0.5, duration = 200, padIndex = 0) {
+  const strong = Math.max(0, Math.min(1, Number(strongMagnitude) || 0));
+  const weak = Math.max(0, Math.min(1, Number(weakMagnitude) || 0));
+  const durationMs = Math.max(50, Math.min(2000, Number(duration) || 200));
+  let gamepad;
+
   try {
-    const gamepads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = gamepads[padIndex];
-    if (gp?.vibrationActuator?.playEffect) {
-      gp.vibrationActuator.playEffect('dual-rumble', {
-        startDelay: 0,
-        duration: Math.max(50, Math.min(2000, duration)),
-        weakMagnitude: Math.max(0, Math.min(1, weakMagnitude)),
-        strongMagnitude: Math.max(0, Math.min(1, strongMagnitude))
-      }).catch(() => {});
+    const pads = typeof navigator !== 'undefined' && navigator.getGamepads
+      ? Array.from(navigator.getGamepads() || [])
+      : [];
+    gamepad = pads.find((pad) => pad?.index === Number(padIndex)) || pads[Number(padIndex)];
+  } catch (error) {
+    gamepad = null;
+  }
+
+  const tryNativeRumble = async () => {
+    if (!isTauriEnvironment()) return false;
+    try {
+      await testGamepadVibration(Number(padIndex), strong, weak, durationMs);
       return true;
+    } catch (error) {
+      console.warn('[Gamepad] Vibração nativa indisponível:', error?.message || error);
+      return false;
     }
-  } catch (e) {}
-  return false;
+  };
+
+  if (!gamepad?.connected) return tryNativeRumble();
+
+  let actuators = [];
+  try {
+    actuators = [...new Set([
+      gamepad.vibrationActuator,
+      ...Array.from(gamepad.hapticActuators || [])
+    ].filter(Boolean))];
+  } catch (error) {}
+  for (const actuator of actuators) {
+    try {
+      if (typeof actuator.playEffect === 'function') {
+        const effects = Array.from(actuator.effects || []);
+        if (effects.length && !effects.includes('dual-rumble')) continue;
+        const result = await actuator.playEffect('dual-rumble', {
+          startDelay: 0,
+          duration: durationMs,
+          weakMagnitude: weak,
+          strongMagnitude: strong
+        });
+        if (result === 'complete' || result === true) return true;
+      } else if (typeof actuator.pulse === 'function') {
+        if (await actuator.pulse(Math.max(strong, weak), durationMs) === true) return true;
+      }
+    } catch (error) {
+      // Alguns WebViews expõem o Gamepad, mas recusam sua API háptica. No
+      // desktop Windows, tentamos então o caminho XInput nativo abaixo.
+    }
+  }
+
+  return tryNativeRumble();
 }
 
 export function setCoopInputTarget(rect) {
@@ -1170,7 +1214,10 @@ export function setupGamepadTesterModal() {
   const closeBtn = document.getElementById('close-gamepad-tester-btn');
   const doneBtn = document.getElementById('done-gamepad-tester-btn');
   const testRumbleBtn = document.getElementById('test-rumble-btn');
+  const rumbleStatus = document.getElementById('gamepad-rumble-status');
   const select = document.getElementById('gamepad-select');
+  const gamepadVisual = document.getElementById('gamepad-visual');
+  const connectionLabel = document.getElementById('gamepad-connection-label');
   const sticksLabel = document.getElementById('gamepad-sticks-label');
   const triggersLabel = document.getElementById('gamepad-triggers-label');
   const buttonsLabel = document.getElementById('gamepad-buttons-label');
@@ -1185,6 +1232,12 @@ export function setupGamepadTesterModal() {
   if (!modal) return;
 
   let animId = null;
+  let gamepadOptionsSignature = '';
+  let nativeXInputPads = [];
+  let nativeXInputPollPending = false;
+  let lastNativeXInputPollAt = 0;
+  const buttonIndicators = Array.from(modal.querySelectorAll('[data-gamepad-button]'));
+  const stickCaps = Array.from(modal.querySelectorAll('[data-gamepad-stick-cap]'));
 
   const updateMappingUI = () => {
     if (presetSelect) presetSelect.value = currentMappingPreset;
@@ -1223,7 +1276,12 @@ export function setupGamepadTesterModal() {
     if (!statusText || !statusBox) return;
     if (isTauriEnvironment()) {
       try {
-        const status = await checkVirtualGamepadDriver();
+        const [status, xinputPads] = await Promise.all([
+          checkVirtualGamepadDriver(),
+          getXInputGamepads().catch(() => [])
+        ]);
+        nativeXInputPads = Array.isArray(xinputPads) ? xinputPads : [];
+        lastNativeXInputPollAt = Date.now();
         if (status?.vigem_available) {
           statusText.textContent = '🟢 Driver ViGEmBus: Ativo e pronto no Windows';
           statusBox.style.background = 'rgba(16, 185, 129, 0.1)';
@@ -1261,32 +1319,81 @@ export function setupGamepadTesterModal() {
   };
 
   const updateHud = () => {
-    const gamepads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
-    const connectedPads = Array.from(gamepads).filter(Boolean);
+    if (isTauriEnvironment() && !nativeXInputPollPending && Date.now() - lastNativeXInputPollAt >= 34) {
+      nativeXInputPollPending = true;
+      lastNativeXInputPollAt = Date.now();
+      getXInputGamepads()
+        .then((pads) => {
+          nativeXInputPads = Array.isArray(pads) ? pads : [];
+        })
+        .catch(() => {})
+        .finally(() => {
+          nativeXInputPollPending = false;
+        });
+    }
+
+    let gamepads = [];
+    try {
+      gamepads = typeof navigator !== 'undefined' && navigator.getGamepads
+        ? Array.from(navigator.getGamepads() || [])
+        : [];
+    } catch (error) {}
+    const connectedPads = gamepads.filter((gamepad) => gamepad?.connected);
 
     if (select) {
-      const currentVal = select.value;
-      select.innerHTML = '';
-      if (connectedPads.length === 0) {
-        const opt = document.createElement('option');
-        opt.value = '';
-        opt.textContent = 'Nenhum controle detectado (pressione qualquer botão)';
-        select.appendChild(opt);
-      } else {
-        connectedPads.forEach((gp) => {
-          const opt = document.createElement('option');
-          opt.value = String(gp.index);
-          opt.textContent = `#${gp.index}: ${gp.id}`;
-          if (String(gp.index) === currentVal) opt.selected = true;
-          select.appendChild(opt);
-        });
+      const signature = [
+        connectedPads.map((gamepad) => `${gamepad.index}:${gamepad.id}`).join('|'),
+        connectedPads.length ? '' : nativeXInputPads.map((gamepad) => gamepad.index).join(',')
+      ].join(';');
+      if (signature !== gamepadOptionsSignature) {
+        const currentVal = select.value;
+        gamepadOptionsSignature = signature;
+        select.replaceChildren();
+        if (connectedPads.length > 0) {
+          connectedPads.forEach((gamepad) => {
+            const option = document.createElement('option');
+            option.value = `web:${gamepad.index}`;
+            option.textContent = `#${gamepad.index}: ${gamepad.id || 'Controle sem identificação'}`;
+            select.appendChild(option);
+          });
+        } else if (nativeXInputPads.length > 0) {
+          nativeXInputPads.forEach((gamepad) => {
+            const option = document.createElement('option');
+            option.value = `xinput:${gamepad.index}`;
+            option.textContent = gamepad.id;
+            select.appendChild(option);
+          });
+        } else {
+          const option = document.createElement('option');
+          option.value = '';
+          option.textContent = 'Nenhum controle detectado (pressione um botão)';
+          select.appendChild(option);
+        }
+        const availableValues = Array.from(select.options, (option) => option.value);
+        select.value = availableValues.includes(currentVal)
+          ? currentVal
+          : (availableValues.find((value) => value !== '') || '');
       }
     }
 
-    const selectedIdx = select && select.value !== '' ? Number(select.value) : 0;
-    const gp = gamepads[selectedIdx];
+    const selectedValue = select?.value || 'web:0';
+    const selectedNativeIndex = selectedValue.startsWith('xinput:')
+      ? Number(selectedValue.slice('xinput:'.length))
+      : null;
+    const selectedWebIndex = selectedValue.startsWith('web:')
+      ? Number(selectedValue.slice('web:'.length))
+      : null;
+    const gp = selectedWebIndex === null
+      ? nativeXInputPads.find((gamepad) => gamepad.index === selectedNativeIndex) || null
+      : connectedPads.find((gamepad) => gamepad.index === selectedWebIndex) || null;
+    buttonIndicators.forEach((indicator) => indicator.classList.remove('is-pressed'));
 
-    if (gp && gp.connected) {
+    if (gp) {
+      gamepadVisual?.classList.add('is-connected');
+      if (gamepadVisual) {
+        gamepadVisual.setAttribute('aria-label', `Controle ${gp.id || `número ${gp.index}`}; botões pressionados são destacados na ilustração`);
+      }
+      if (connectionLabel) connectionLabel.textContent = `${gp.id || `Controle ${gp.index}`} · mexa nos analógicos e pressione os botões para testar`;
       const lx = (gp.axes[0] || 0).toFixed(2);
       const ly = (gp.axes[1] || 0).toFixed(2);
       const rx = (gp.axes[2] || 0).toFixed(2);
@@ -1299,7 +1406,9 @@ export function setupGamepadTesterModal() {
 
       const pressed = [];
       const btnNames = ['A', 'B', 'X', 'Y', 'LB', 'RB', 'LT', 'RT', 'Back', 'Start', 'L3', 'R3', 'Up', 'Down', 'Left', 'Right', 'Guide'];
-      const rawButtons = gp.buttons.map(b => (typeof b === 'object' ? Boolean(b.pressed) : b === 1.0));
+      const rawButtons = Array.from(gp.buttons || [], (button) => (
+        typeof button === 'object' ? Boolean(button.pressed) : button === 1.0
+      ));
       const mappedButtons = applyButtonMapping(rawButtons);
       mappedButtons.forEach((isPressed, i) => {
         if (isPressed) {
@@ -1312,6 +1421,38 @@ export function setupGamepadTesterModal() {
         }
       });
       if (buttonsLabel) buttonsLabel.textContent = pressed.length > 0 ? pressed.join(', ') : 'Nenhum';
+
+      buttonIndicators.forEach((indicator) => {
+        const index = Number(indicator.dataset.gamepadButton);
+        const value = gp.buttons?.[index];
+        const isPressed = typeof value === 'object'
+          ? Boolean(value.pressed || value.value > 0.08)
+          : value === 1.0;
+        indicator.classList.toggle('is-pressed', isPressed);
+      });
+
+      const axis = (index) => Math.max(-1, Math.min(1, Number(gp.axes?.[index]) || 0));
+      stickCaps.forEach((cap) => {
+        const isLeft = cap.dataset.gamepadStickCap === 'left';
+        const x = axis(isLeft ? 0 : 2) * 8;
+        const y = axis(isLeft ? 1 : 3) * 8;
+        cap.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
+      });
+    } else if (selectedNativeIndex !== null) {
+      gamepadVisual?.classList.add('is-connected');
+      gamepadVisual?.setAttribute('aria-label', `Controle Xbox ${selectedNativeIndex + 1} conectado por XInput; botões ainda não estão disponíveis para animação`);
+      if (connectionLabel) connectionLabel.textContent = `Controle Xbox #${selectedNativeIndex + 1} encontrado pelo Windows · vibração nativa disponível`;
+      if (sticksLabel) sticksLabel.textContent = 'Leitura dos botões indisponível neste WebView';
+      if (triggersLabel) triggersLabel.textContent = 'LT: — | RT: —';
+      if (buttonsLabel) buttonsLabel.textContent = 'Windows detectou o controle';
+    } else {
+      gamepadVisual?.classList.remove('is-connected');
+      gamepadVisual?.setAttribute('aria-label', 'Ilustração 3D do controle; nenhum controle conectado');
+      if (connectionLabel) connectionLabel.textContent = 'Conecte um controle e pressione qualquer botão para começar';
+      if (sticksLabel) sticksLabel.textContent = 'L: (0.00, 0.00) | R: (0.00, 0.00)';
+      if (triggersLabel) triggersLabel.textContent = 'LT: 0% | RT: 0%';
+      if (buttonsLabel) buttonsLabel.textContent = 'Nenhum controle conectado';
+      stickCaps.forEach((cap) => cap.setAttribute('transform', 'translate(0 0)'));
     }
 
     if (modal.style.display !== 'none') {
@@ -1336,13 +1477,54 @@ export function setupGamepadTesterModal() {
   closeBtn?.addEventListener('click', closeModal);
   doneBtn?.addEventListener('click', closeModal);
 
-  testRumbleBtn?.addEventListener('click', () => {
-    const selectedIdx = select && select.value !== '' ? Number(select.value) : 0;
-    const ok = triggerGamepadRumble(0.8, 0.8, 300, selectedIdx);
-    if (!ok) {
-      showToast('Seu controle ou navegador não possui suporte a vibração.', 'info');
-    } else {
-      showToast('📳 Sinal de vibração enviado ao controle!', 'success');
+  testRumbleBtn?.addEventListener('click', async () => {
+    const selectedValue = select?.value || 'web:0';
+    const selectedIdx = selectedValue.startsWith('xinput:')
+      ? Number(selectedValue.slice('xinput:'.length))
+      : Number(selectedValue.replace('web:', '')) || 0;
+    testRumbleBtn.disabled = true;
+    const originalLabel = testRumbleBtn.textContent;
+    testRumbleBtn.textContent = 'Testando…';
+    if (rumbleStatus) rumbleStatus.textContent = 'Enviando pulso de vibração…';
+    gamepadVisual?.classList.remove('is-rumbling');
+    void gamepadVisual?.offsetWidth;
+    gamepadVisual?.classList.add('is-rumbling');
+    setTimeout(() => gamepadVisual?.classList.remove('is-rumbling'), 800);
+    try {
+      let ok;
+      let controllerAvailable = false;
+      if (selectedValue.startsWith('xinput:')) {
+        controllerAvailable = nativeXInputPads.some((gamepad) => gamepad.index === selectedIdx);
+        try {
+          await testGamepadVibration(selectedIdx, 0.8, 0.8, 350);
+          ok = true;
+        } catch (error) {
+          ok = false;
+        }
+      } else {
+        try {
+          const pads = typeof navigator !== 'undefined' && navigator.getGamepads
+            ? Array.from(navigator.getGamepads() || [])
+            : [];
+          controllerAvailable = pads.some((gamepad) => gamepad?.connected && gamepad.index === selectedIdx);
+        } catch (error) {}
+        ok = await triggerGamepadRumble(0.8, 0.8, 350, selectedIdx);
+      }
+      if (ok) {
+        if (rumbleStatus) rumbleStatus.textContent = 'Comando de vibração enviado ao controle.';
+        showToast('📳 Comando de vibração enviado ao controle.', 'success');
+      } else {
+        const message = !controllerAvailable
+          ? 'Nenhum controle conectado foi detectado. Conecte-o e pressione um botão para começar.'
+          : isTauriEnvironment()
+          ? 'Não foi possível vibrar este controle. Confirme se ele é XInput e está conectado.'
+          : 'Este navegador ou controle não oferece vibração háptica. Tente outro navegador ou controle.';
+        if (rumbleStatus) rumbleStatus.textContent = message;
+        showToast(message, 'info', 5000);
+      }
+    } finally {
+      testRumbleBtn.disabled = false;
+      testRumbleBtn.textContent = originalLabel;
     }
   });
 }
