@@ -1239,6 +1239,25 @@ export function setupGamepadTesterModal() {
   const buttonIndicators = Array.from(modal.querySelectorAll('[data-gamepad-button]'));
   const stickCaps = Array.from(modal.querySelectorAll('[data-gamepad-stick-cap]'));
 
+  // Inicialização assíncrona do visualizador 3D com Three.js e mouse-tracking
+  let viewer3D = null;
+  const canvas3D = modal.querySelector('#gamepad-3d-canvas');
+  if (canvas3D) {
+    import('./gamepad-3d-viewer.js')
+      .then(({ Gamepad3DViewer }) => {
+        viewer3D = new Gamepad3DViewer({
+          container: document.getElementById('gamepad-visual-stage'),
+          canvas: canvas3D,
+          modelUrl: 'css/assets/gamepad.glb',
+          enableMouseTracking: true
+        });
+        viewer3D.init();
+      })
+      .catch((err) => {
+        console.warn('[Gamepad 3D] Falha ao carregar visualizador:', err);
+      });
+  }
+
   const updateMappingUI = () => {
     if (presetSelect) presetSelect.value = currentMappingPreset;
     if (mappingStatus) {
@@ -1438,6 +1457,16 @@ export function setupGamepadTesterModal() {
         const y = axis(isLeft ? 1 : 3) * 8;
         cap.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)})`);
       });
+
+      if (viewer3D) {
+        viewer3D.updateInputs({
+          axes: gp.axes,
+          buttons: mappedButtons.map((pressed, i) => ({
+            pressed,
+            value: typeof gp.buttons?.[i] === 'object' ? gp.buttons[i].value : (gp.buttons?.[i] ? 1 : 0)
+          }))
+        });
+      }
     } else if (selectedNativeIndex !== null) {
       gamepadVisual?.classList.add('is-connected');
       gamepadVisual?.setAttribute('aria-label', `Controle Xbox ${selectedNativeIndex + 1} conectado por XInput; botões ainda não estão disponíveis para animação`);
@@ -1453,6 +1482,9 @@ export function setupGamepadTesterModal() {
       if (triggersLabel) triggersLabel.textContent = 'LT: 0% | RT: 0%';
       if (buttonsLabel) buttonsLabel.textContent = 'Nenhum controle conectado';
       stickCaps.forEach((cap) => cap.setAttribute('transform', 'translate(0 0)'));
+      if (viewer3D) {
+        viewer3D.updateInputs({ axes: [0, 0, 0, 0], buttons: [] });
+      }
     }
 
     if (modal.style.display !== 'none') {
@@ -1462,6 +1494,7 @@ export function setupGamepadTesterModal() {
 
   const openModal = () => {
     modal.style.display = 'flex';
+    viewer3D?.start();
     updateDriverStatus();
     updateMappingUI();
     if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(animId);
@@ -1470,6 +1503,7 @@ export function setupGamepadTesterModal() {
 
   const closeModal = () => {
     modal.style.display = 'none';
+    viewer3D?.stop();
     if (typeof cancelAnimationFrame !== 'undefined') cancelAnimationFrame(animId);
   };
 
@@ -1478,6 +1512,7 @@ export function setupGamepadTesterModal() {
   doneBtn?.addEventListener('click', closeModal);
 
   testRumbleBtn?.addEventListener('click', async () => {
+    viewer3D?.triggerRumble(1.0);
     const selectedValue = select?.value || 'web:0';
     const selectedIdx = selectedValue.startsWith('xinput:')
       ? Number(selectedValue.slice('xinput:'.length))
