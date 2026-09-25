@@ -1,4 +1,4 @@
-﻿import http from 'node:http';
+import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -21,7 +21,9 @@ const MIME_TYPES = {
   '.svg': 'image/svg+xml',
   '.ico': 'image/x-icon',
   '.wav': 'audio/wav',
-  '.mp3': 'audio/mpeg'
+  '.mp3': 'audio/mpeg',
+  '.glb': 'model/gltf-binary',
+  '.gltf': 'model/gltf+json'
 };
 
 const server = http.createServer((req, res) => {
