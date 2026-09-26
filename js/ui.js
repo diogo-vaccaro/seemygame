@@ -391,6 +391,8 @@ export function addOrUpdateVideoCard({ stream, peerId, label, isLocal = false, o
       }
 
       updateGridEmptyState();
+      const reactionsDock = document.getElementById('reactions-dock');
+      if (reactionsDock) reactionsDock.style.display = 'flex';
       return { card, video: existingVideo };
     }
   } else {
@@ -873,6 +875,8 @@ export function addOrUpdateVideoCard({ stream, peerId, label, isLocal = false, o
   }
 
   updateGridEmptyState();
+  const reactionsDock = document.getElementById('reactions-dock');
+  if (reactionsDock) reactionsDock.style.display = 'flex';
   return { card, video };
 }
 

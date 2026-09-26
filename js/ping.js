@@ -70,6 +70,10 @@ export class TacticalPingManager {
    * @param {Object} param
    */
   addPing({ x, y, type = 'ping', color = null, senderName = 'Amigo', duration = 2000 }) {
+    if ((!this.canvas || !this.canvas.isConnected) && typeof document !== 'undefined') {
+      const canvasEl = document.getElementById('ping-canvas');
+      if (canvasEl) this.setCanvas(canvasEl);
+    }
     const safeType = type === 'danger' ? 'danger' : 'ping';
     const safeColor = typeof color === 'string' && /^#[0-9a-f]{3,8}$/i.test(color) ? color : null;
     const safeSenderName = typeof senderName === 'string' ? senderName.slice(0, 64) : 'Amigo';
@@ -100,6 +104,10 @@ export class TacticalPingManager {
    * Inicia um traçado de laser pointer
    */
   startLaserTrail({ color = '#10b981' } = {}) {
+    if ((!this.canvas || !this.canvas.isConnected) && typeof document !== 'undefined') {
+      const canvasEl = document.getElementById('ping-canvas');
+      if (canvasEl) this.setCanvas(canvasEl);
+    }
     const safeColor = typeof color === 'string' && /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#10b981';
     if (this.laserTrails.length >= this.maxLaserTrails) this.laserTrails.shift();
     this.isDrawingLaser = true;

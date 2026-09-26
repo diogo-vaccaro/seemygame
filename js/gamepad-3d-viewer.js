@@ -100,9 +100,9 @@ export class Gamepad3DViewer {
 
       // Câmera Perspectiva
       const aspect = (this.canvas.clientWidth || 380) / (this.canvas.clientHeight || 240);
-      this.camera = new THREE.PerspectiveCamera(38, aspect, 0.1, 100);
-      this.camera.position.set(0, 2.5, 4.8);
-      this.camera.lookAt(0, 0.1, 0);
+      this.camera = new THREE.PerspectiveCamera(34, aspect, 0.1, 100);
+      this.camera.position.set(0, 2.35, 3.35);
+      this.camera.lookAt(0, -0.05, 0.08);
 
       // Configuração de Iluminação Estúdio Gamer (Key Light + Rim/Neon Accents)
       this._setupLighting();
@@ -135,41 +135,41 @@ export class Gamepad3DViewer {
   }
 
   _setupLighting() {
-    // Luz ambiente suave
-    const ambientLight = new THREE.AmbientLight(0x282c3f, 1.2);
+    // Luz ambiente para visibilidade geral
+    const ambientLight = new THREE.AmbientLight(0x404866, 1.8);
     this.scene.add(ambientLight);
 
     // Key Light branca direcional frontal
-    const keyLight = new THREE.DirectionalLight(0xffffff, 2.2);
-    keyLight.position.set(2.5, 4.5, 3.5);
+    const keyLight = new THREE.DirectionalLight(0xffffff, 2.8);
+    keyLight.position.set(2.5, 4.2, 3.6);
     this.scene.add(keyLight);
 
     // Rim Light Roxa Neon (Gamer Accent esquerda)
-    const rimPurple = new THREE.DirectionalLight(0xa78bfa, 3.0);
-    rimPurple.position.set(-4.0, 2.5, -2.5);
+    const rimPurple = new THREE.DirectionalLight(0xc084fc, 3.8);
+    rimPurple.position.set(-4.5, 2.0, -2.5);
     this.scene.add(rimPurple);
 
     // Fill Light Azul Ciano (Gamer Accent direita)
-    const fillCyan = new THREE.DirectionalLight(0x06b6d4, 2.2);
-    fillCyan.position.set(4.0, 1.5, -1.5);
+    const fillCyan = new THREE.DirectionalLight(0x22d3ee, 3.5);
+    fillCyan.position.set(4.5, 1.8, -2.0);
     this.scene.add(fillCyan);
 
-    // Luz de preenchimento frontal suave
-    const frontFill = new THREE.PointLight(0x818cf8, 1.0, 10);
-    frontFill.position.set(0, -1.0, 3.0);
+    // Luz de preenchimento frontal suave para destacar chanfros e detalhes
+    const frontFill = new THREE.PointLight(0xa5b4fc, 1.8, 12);
+    frontFill.position.set(0, -0.4, 3.0);
     this.scene.add(frontFill);
   }
 
   _setupGroundShadow() {
-    const shadowGeo = new THREE.PlaneGeometry(4.2, 2.8);
+    const shadowGeo = new THREE.PlaneGeometry(3.8, 2.6);
     const canvas = document.createElement('canvas');
     canvas.width = 256;
     canvas.height = 256;
     const ctx = canvas.getContext('2d');
     if (ctx) {
-      const grad = ctx.createRadialGradient(128, 128, 15, 128, 128, 120);
-      grad.addColorStop(0, 'rgba(0, 0, 0, 0.75)');
-      grad.addColorStop(0.5, 'rgba(0, 0, 0, 0.35)');
+      const grad = ctx.createRadialGradient(128, 128, 20, 128, 128, 120);
+      grad.addColorStop(0, 'rgba(0, 0, 0, 0.7)');
+      grad.addColorStop(0.55, 'rgba(0, 0, 0, 0.3)');
       grad.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = grad;
       ctx.fillRect(0, 0, 256, 256);
@@ -182,7 +182,7 @@ export class Gamepad3DViewer {
     });
     this.parts.shadow = new THREE.Mesh(shadowGeo, shadowMat);
     this.parts.shadow.rotation.x = -Math.PI / 2;
-    this.parts.shadow.position.set(0, -0.65, 0);
+    this.parts.shadow.position.set(0, -0.68, 0.2);
     this.scene.add(this.parts.shadow);
   }
 

@@ -828,8 +828,14 @@
       <!-- Grade Fluida de Cartões de Vídeo (Quando há transmissões ativas) -->
       <div class="video-grid" id="video-grid" style="display: none;"></div>
 
+      <!-- Canvas de Tactical Ping & Telestrator da Sala -->
+      <canvas id="ping-canvas" class="ping-canvas"></canvas>
+
+      <!-- Overlay de Reações Flutuantes -->
+      <div id="reactions-overlay" class="reactions-overlay"></div>
+
       <!-- Doca de Reações Flutuantes & Pings -->
-      <div id="reactions-dock" class="reactions-dock" style="display: none;">
+      <div id="reactions-dock" class="reactions-dock">
         <button class="reaction-dock-btn" data-emoji="🔥" title="Hype!">🔥</button>
         <button class="reaction-dock-btn" data-emoji="💀" title="F / Morto">💀</button>
         <button class="reaction-dock-btn" data-emoji="🎯" title="Mira boa!">🎯</button>
@@ -840,6 +846,7 @@
         <div class="ping-mode-bar">
           <button id="ping-mode-btn" class="ping-mode-btn active" title="Clique no vídeo para emitir Ping Tático">📍 Ping</button>
           <button id="danger-mode-btn" class="ping-mode-btn" title="Clique no vídeo para emitir Alerta de Perigo">⚠️ Alerta</button>
+          <button id="laser-mode-btn" class="ping-mode-btn" title="Desenhar na tela com Laser Pointer (ou segure Shift / Botão Direito)">✏️ Laser</button>
         </div>
       </div>
 

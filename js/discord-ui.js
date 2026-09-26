@@ -971,9 +971,12 @@ export class DiscordUIController {
 
   syncStageView(hasActiveStreams) {
     this.hasActiveStreams = Boolean(hasActiveStreams);
-    const { voiceStageGrid, videoGrid, bottomControlDock } = this.elements;
+    const { voiceStageGrid, videoGrid, bottomControlDock, reactionsDock } = this.elements;
     if (!this.hasActiveStreams && !this.isStreaming && bottomControlDock) {
       bottomControlDock.classList.remove('dock-hidden');
+    }
+    if (reactionsDock) {
+      reactionsDock.style.display = 'flex';
     }
     if (videoGrid && voiceStageGrid) {
       if (hasActiveStreams) {

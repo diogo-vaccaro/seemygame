@@ -45,6 +45,10 @@ export class FloatingReactionsManager {
   spawnReaction({ emoji, xPercent = null, senderName = null }) {
     if (!this.isValidReaction(emoji)) return null;
     if (this.activeReactionsCount >= this.maxConcurrent) return null;
+    if ((!this.container || !this.container.isConnected) && typeof document !== 'undefined') {
+      const overlay = document.getElementById('reactions-overlay');
+      if (overlay) this.container = overlay;
+    }
     if (!this.container || typeof document === 'undefined') return null;
 
     const el = document.createElement('div');
