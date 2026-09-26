@@ -368,7 +368,10 @@ export function addOrUpdateVideoCard({ stream, peerId, label, isLocal = false, o
     const existingVideo = card.querySelector('video');
     const wasLocal = card.dataset.isLocal === 'true';
     if (existingVideo && wasLocal === isLocal) {
-      existingVideo.srcObject = resolveCardDisplayStream(stream, isLocal);
+      const resolvedStream = resolveCardDisplayStream(stream, isLocal);
+      if (existingVideo.srcObject !== resolvedStream) {
+        existingVideo.srcObject = resolvedStream;
+      }
       setCardStreamPaused(peerId, false);
       hideCardLoading(peerId);
 

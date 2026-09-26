@@ -2392,8 +2392,9 @@ async function handleStartDirectStream(data, conn) {
   // Limpa chamadas ou conexões anteriores com esse host
   const prevDirect = directViewerPeerConnections.get(hostId);
   if (prevDirect) {
-    if (['connecting', 'connected'].includes(prevDirect.connectionState)) {
-      console.log(`[DirectStream] RTCPeerConnection já ativa para ${hostId}, ignorando START_DIRECT_STREAM duplicado.`);
+    const isAlive = ['new', 'connecting', 'connected'].includes(prevDirect.connectionState) && prevDirect.signalingState !== 'closed';
+    if (isAlive) {
+      console.log(`[DirectStream] RTCPeerConnection já ativa para ${hostId} (state=${prevDirect.connectionState}), ignorando START_DIRECT_STREAM duplicado.`);
       return;
     }
     try { prevDirect.close(); } catch (e) {}
@@ -2791,9 +2792,13 @@ export function initiateMediaCallToViewer(viewerPeerId) {
 
   // Garante que não criamos chamadas duplicadas para o mesmo espectador
   const existingCall = activeMediaCalls.get(viewerPeerId);
-  if (existingCall && existingCall.open !== false && !existingCall._closed) {
-    console.log(`Chamada de mídia já ativa ou em andamento para: ${viewerPeerId}`);
-    return;
+  if (existingCall && !existingCall._closed) {
+    const pcState = existingCall.peerConnection?.connectionState;
+    const isAlive = !pcState || pcState === 'new' || pcState === 'connecting' || pcState === 'connected';
+    if (isAlive) {
+      console.log(`Chamada de mídia já ativa ou em andamento para: ${viewerPeerId}`);
+      return;
+    }
   }
 
   console.log(`Iniciando chamada com foco em alta fluidez para: ${viewerPeerId}`);
@@ -2891,6 +2896,12 @@ function handleIncomingMediaCall(call) {
   // Se já existe uma chamada antiga desse host, fecha a anterior antes de aceitar a nova
   const existingCall = activeMediaCalls.get(call.peer);
   if (existingCall && existingCall !== call) {
+    const pcState = existingCall.peerConnection?.connectionState;
+    if (existingCall.open || pcState === 'connected') {
+      console.log(`[MediaCall] Já existe chamada ativa e conectada com ${call.peer}, ignorando chamada redundante.`);
+      try { call.close(); } catch (e) {}
+      return;
+    }
     try { existingCall.close(); } catch (e) {}
   }
 
