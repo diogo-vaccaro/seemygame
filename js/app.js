@@ -336,6 +336,25 @@ export function setStoredRoomPin(newPin) {
   }
 }
 
+export function getClientSessionId() {
+  if (typeof sessionStorage === 'undefined') {
+    return 'sess_' + Math.random().toString(36).slice(2, 10);
+  }
+  let sid = sessionStorage.getItem('seemygame_client_session_id');
+  if (!sid) {
+    sid = 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
+    sessionStorage.setItem('seemygame_client_session_id', sid);
+  }
+  return sid;
+}
+
+export function isCurrentlyStreaming() {
+  const hasBrowserMedia = Boolean(localStream && (localStream.active !== false) && (typeof localStream.getVideoTracks !== 'function' || localStream.getVideoTracks().length > 0));
+  const hasNativeCapture = Boolean(isDesktopApp() && activeNativeCaptureProvider?.session?.sessionId);
+  const hasRoomStreaming = Boolean(roomManager && roomManager.localStreamingState?.isStreaming);
+  return hasBrowserMedia || hasNativeCapture || hasRoomStreaming;
+}
+
 export function isPeerAuthorizedForMedia(peerId) {
   if (!peerId) return false;
   if (isRoomMode()) {
@@ -1006,9 +1025,14 @@ export function resetPeer() {
 
 export function setupRoomSession(id) {
   const { roomId, roomPin } = getRoomInfoFromUrl();
-  const userName = (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_user_name') : null) || 'Você';
   const masterId = getRoomMasterPeerId(roomId);
   const isMaster = (id === masterId);
+  const clientSessionId = getClientSessionId();
+
+  const customUserName = (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_user_name') : null);
+  const userName = (typeof customUserName === 'string' && customUserName.trim())
+    ? customUserName.trim().slice(0, 30)
+    : (isMaster ? 'Host' : `Amigo ${id.slice(-4)}`);
 
   if (typeof sessionStorage !== 'undefined') {
     if (isMaster) {
@@ -1022,6 +1046,7 @@ export function setupRoomSession(id) {
     roomManager = new RoomManager({
       roomId,
       userName,
+      clientSessionId,
       roomPin,
       onStateChange: (state) => {
         if (discordUI) {
@@ -1085,7 +1110,7 @@ export function setupRoomSession(id) {
           setupVoiceMediaCall(call, member.peerId);
         }
 
-        if (localStream && isPeerAuthorizedForMedia(member.peerId)) {
+        if (isCurrentlyStreaming() && isPeerAuthorizedForMedia(member.peerId)) {
           authenticatedViewers.add(member.peerId);
           let conn = connectedViewers.get(member.peerId) || roomManager.meshConnections.get(member.peerId);
           if (!conn && peer && !peer.destroyed) {
@@ -1168,10 +1193,11 @@ export function setupRoomSession(id) {
       masterConn.send({
         type: 'ROOM_JOIN_REQUEST',
         name: userName,
+        clientSessionId,
         pin: roomPin,
         isMuted: voiceManager.isMuted,
         isDeafened: voiceManager.isDeafened,
-        isStreaming: false
+        isStreaming: isCurrentlyStreaming()
       });
     });
     setupIncomingDataConnection(masterConn);
@@ -1861,7 +1887,9 @@ export function initDiscordFeatures() {
       if (!floatingReactionsManager.canSend()) return;
       const isHost = !window.location.pathname.endsWith('viewer.html');
       const coopState = getCoopState();
-      const senderName = isHost ? 'Streamer' : (coopState.isPlayer2 ? 'Player 2' : `Amigo ${myId ? myId.slice(0, 4) : ''}`);
+      const senderName = isRoomMode() && roomManager?.userName
+        ? roomManager.userName
+        : (isHost ? 'Streamer' : (coopState.isPlayer2 ? 'Player 2' : (myId ? `Amigo ${myId.slice(0, 4)}` : 'Espectador')));
       const xPercent = Math.random() * 70 + 15;
 
       floatingReactionsManager.spawnReaction({ emoji, xPercent, senderName });
@@ -2081,7 +2109,7 @@ function setupIncomingDataConnection(conn) {
       // A mídia só é transmitida se o participante já estiver explicitamente autorizado na sala.
       if (roomManager && roomManager.isPeerAuthorized(conn.peer)) {
         authenticatedViewers.add(conn.peer);
-        if (localStream) {
+        if (isCurrentlyStreaming()) {
           initiateMediaCallToViewer(conn.peer);
           conn.send({ type: 'STREAM_STATUS', isStreaming: true });
         } else {
@@ -2099,7 +2127,7 @@ function setupIncomingDataConnection(conn) {
       } else {
         // Sala aberta: autoriza imediatamente
         authenticatedViewers.add(conn.peer);
-        if (localStream) {
+        if (isCurrentlyStreaming()) {
           initiateMediaCallToViewer(conn.peer);
           conn.send({ type: 'STREAM_STATUS', isStreaming: true });
         } else {
@@ -2159,7 +2187,7 @@ function setupIncomingDataConnection(conn) {
           return;
         }
         authenticatedViewers.add(conn.peer);
-        if (localStream) {
+        if (isCurrentlyStreaming()) {
           initiateMediaCallToViewer(conn.peer);
           conn.send({ type: 'STREAM_STATUS', isStreaming: true });
         } else {
@@ -2180,7 +2208,7 @@ function setupIncomingDataConnection(conn) {
         authenticatedViewers.add(conn.peer);
         conn.send({ type: 'PIN_ACCEPTED' });
         showToast(`Amigo (${conn.peer.slice(0, 6)}) autenticou com PIN.`, 'success');
-        if (localStream) {
+        if (isCurrentlyStreaming()) {
           initiateMediaCallToViewer(conn.peer);
           conn.send({ type: 'STREAM_STATUS', isStreaming: true });
         } else {
@@ -2189,7 +2217,7 @@ function setupIncomingDataConnection(conn) {
       } else {
         authenticatedViewers.add(conn.peer);
         showToast(`Amigo (${conn.peer.slice(0, 6)}) solicitou o stream.`, 'info');
-        if (localStream) {
+        if (isCurrentlyStreaming()) {
           initiateMediaCallToViewer(conn.peer);
         }
       }
@@ -2211,7 +2239,9 @@ function setupIncomingDataConnection(conn) {
     }
 
     if (data.type === 'STREAM_STATUS') {
-      if (watchingHosts.has(conn.peer)) {
+      if (data.isStreaming && !watchingHosts.has(conn.peer) && (isRoomMode() ? roomManager?.isPeerAuthorized(conn.peer) : isPeerAuthorizedForMedia(conn.peer))) {
+        watchFriend(conn.peer);
+      } else if (watchingHosts.has(conn.peer)) {
         if (!data.isStreaming) {
           updateCardStatus(conn.peer, 'Amigo conectado! Aguardando ele iniciar o jogo...');
         } else {
@@ -2658,7 +2688,8 @@ export async function setupNativeBridgeListener() {
 
 // Transmissor envia o vídeo com foco em alta fluidez (Idempotente)
 export function initiateMediaCallToViewer(viewerPeerId) {
-  if (!localStream || !peer) return;
+  const isNativeActive = Boolean(isDesktopApp() && activeNativeCaptureProvider?.session?.sessionId);
+  if ((!localStream && !isNativeActive) || !peer) return;
 
   // Barreira central de autorização: nunca inicia chamada ou negociação direta para peer não autorizado
   if (!isPeerAuthorizedForMedia(viewerPeerId)) {
@@ -2667,7 +2698,6 @@ export function initiateMediaCallToViewer(viewerPeerId) {
   }
 
   // Alternativa 1: se captura nativa estiver ativa no desktop, transmite diretamente via GStreamer webrtcbin
-  const isNativeActive = Boolean(isDesktopApp() && activeNativeCaptureProvider?.session?.sessionId);
   if (isNativeActive) {
     const sessionId = activeNativeCaptureProvider.session.sessionId;
     if (activeNativeViewerPeers.has(viewerPeerId) || activeDirectSignaling.has(viewerPeerId)) {
@@ -2712,6 +2742,8 @@ export function initiateMediaCallToViewer(viewerPeerId) {
       return;
     }
   }
+
+  if (!localStream) return;
 
   // Garante que não criamos chamadas duplicadas para o mesmo espectador
   const existingCall = activeMediaCalls.get(viewerPeerId);
@@ -3290,6 +3322,9 @@ export async function startLocalStream(options = {}) {
       onPanicClick: () => revokePlayer2()
     });
 
+    const reactionsDock = document.getElementById('reactions-dock');
+    if (reactionsDock) reactionsDock.style.display = 'flex';
+
     // Inicia escuta para Companion Agent Windows (jogos PC nativos)
     initCompanionAgentConnection();
     
@@ -3809,42 +3844,69 @@ export async function toggleFacecam() {
   }
 }
 
+let tacticalPingAbortController = null;
+
 export function initTacticalPing() {
   const canvas = document.getElementById('ping-canvas');
   if (!canvas) return;
 
   tacticalPingManager.setCanvas(canvas);
 
+  if (tacticalPingAbortController) {
+    tacticalPingAbortController.abort();
+  }
+  tacticalPingAbortController = new AbortController();
+  const { signal } = tacticalPingAbortController;
+
   const resize = () => {
     const parent = canvas.parentElement;
     if (parent) {
-      canvas.width = parent.clientWidth || 1280;
-      canvas.height = parent.clientHeight || 720;
+      const w = parent.clientWidth || 1280;
+      const h = parent.clientHeight || 720;
+      if (canvas.width !== w || canvas.height !== h) {
+        canvas.width = w;
+        canvas.height = h;
+      }
     }
   };
   resize();
-  window.addEventListener('resize', resize);
+  window.addEventListener('resize', resize, { signal });
+  if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
+    const ro = new ResizeObserver(resize);
+    ro.observe(canvas.parentElement);
+    signal.addEventListener('abort', () => ro.disconnect());
+  }
 
   let currentPingMode = 'ping';
   const pingModeBtn = document.getElementById('ping-mode-btn');
   const dangerModeBtn = document.getElementById('danger-mode-btn');
+  const laserModeBtn = document.getElementById('laser-mode-btn');
 
-  if (pingModeBtn && dangerModeBtn) {
-    pingModeBtn.addEventListener('click', () => {
-      currentPingMode = 'ping';
-      pingModeBtn.classList.add('active');
-      dangerModeBtn.classList.remove('active');
-    });
-    dangerModeBtn.addEventListener('click', () => {
-      currentPingMode = 'danger';
-      dangerModeBtn.classList.add('active');
-      pingModeBtn.classList.remove('active');
-    });
+  const updateModeButtons = (mode) => {
+    currentPingMode = mode;
+    if (pingModeBtn) pingModeBtn.classList.toggle('active', mode === 'ping');
+    if (dangerModeBtn) dangerModeBtn.classList.toggle('active', mode === 'danger');
+    if (laserModeBtn) laserModeBtn.classList.toggle('active', mode === 'laser');
+    if (canvas) {
+      canvas.style.cursor = 'crosshair';
+    }
+  };
+
+  if (pingModeBtn) {
+    pingModeBtn.addEventListener('click', () => updateModeButtons('ping'), { signal });
+  }
+  if (dangerModeBtn) {
+    dangerModeBtn.addEventListener('click', () => updateModeButtons('danger'), { signal });
+  }
+  if (laserModeBtn) {
+    laserModeBtn.addEventListener('click', () => updateModeButtons('laser'), { signal });
   }
 
   let isPointerDown = false;
 
   canvas.addEventListener('pointerdown', (e) => {
+    if (getCoopState().isPlayer2) return;
+
     if (typeof document !== 'undefined') {
       const clickedEl = document.elementFromPoint ? document.elementFromPoint(e.clientX, e.clientY) : null;
       if (clickedEl && (
@@ -3852,10 +3914,13 @@ export function initTacticalPing() {
         clickedEl.closest('.card-controls') ||
         clickedEl.closest('.card-btn') ||
         clickedEl.closest('.reactions-dock') ||
+        clickedEl.closest('.bottom-control-dock') ||
         clickedEl.closest('.facecam-overlay') ||
+        clickedEl.closest('.audio-unmute-overlay') ||
         clickedEl.closest('button') ||
         clickedEl.closest('header') ||
-        clickedEl.closest('nav')
+        clickedEl.closest('nav') ||
+        clickedEl.closest('aside')
       )) {
         return;
       }
@@ -3868,19 +3933,23 @@ export function initTacticalPing() {
 
     const isHost = !window.location.pathname.endsWith('viewer.html');
     const coopState = getCoopState();
-    const senderName = isHost ? 'Streamer' : (coopState.isPlayer2 ? 'Player 2' : `Amigo ${myId ? myId.slice(0, 4) : ''}`);
+    const senderName = isRoomMode() && roomManager?.userName
+      ? roomManager.userName
+      : (isHost ? 'Streamer' : (coopState.isPlayer2 ? 'Player 2' : (myId ? `Amigo ${myId.slice(0, 4)}` : 'Espectador')));
 
-    if (e.shiftKey || e.button === 2) {
+    const isLaser = currentPingMode === 'laser' || e.shiftKey || e.button === 2;
+
+    if (isLaser) {
       const color = isHost ? '#10b981' : '#00ffff';
       tacticalPingManager.startLaserTrail({ color });
-      tacticalPingManager.addLaserPoint({ x, y });
+      tacticalPingManager.addLaserPoint({ x, y, color });
       broadcastDataMessage({ type: 'TACTICAL_LASER', point: { x, y, color } });
     } else {
       const ping = { x, y, type: currentPingMode, senderName };
       tacticalPingManager.addPing(ping);
       broadcastDataMessage({ type: 'TACTICAL_PING', ping });
     }
-  });
+  }, { signal });
 
   canvas.addEventListener('pointermove', (e) => {
     if (!isPointerDown) return;
@@ -3889,10 +3958,12 @@ export function initTacticalPing() {
     const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / (rect.height || 1)));
 
     if (tacticalPingManager.isDrawingLaser) {
-      tacticalPingManager.addLaserPoint({ x, y });
-      broadcastDataMessage({ type: 'TACTICAL_LASER', point: { x, y } });
+      const isHost = !window.location.pathname.endsWith('viewer.html');
+      const color = isHost ? '#10b981' : '#00ffff';
+      tacticalPingManager.addLaserPoint({ x, y, color });
+      broadcastDataMessage({ type: 'TACTICAL_LASER', point: { x, y, color } });
     }
-  });
+  }, { signal });
 
   const stopDrawing = () => {
     if (isPointerDown) {
@@ -3903,10 +3974,12 @@ export function initTacticalPing() {
     }
   };
 
-  canvas.addEventListener('pointerup', stopDrawing);
-  canvas.addEventListener('pointercancel', stopDrawing);
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+  canvas.addEventListener('pointerup', stopDrawing, { signal });
+  canvas.addEventListener('pointercancel', stopDrawing, { signal });
+  canvas.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
 }
+
+let floatingReactionsAbortController = null;
 
 export function initFloatingReactions() {
   const overlay = document.getElementById('reactions-overlay');
@@ -3916,6 +3989,12 @@ export function initFloatingReactions() {
 
   const dock = document.getElementById('reactions-dock');
   if (dock) {
+    if (floatingReactionsAbortController) {
+      floatingReactionsAbortController.abort();
+    }
+    floatingReactionsAbortController = new AbortController();
+    const { signal } = floatingReactionsAbortController;
+
     dock.querySelectorAll('.reaction-dock-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
         const emoji = btn.dataset.emoji;
@@ -3923,7 +4002,9 @@ export function initFloatingReactions() {
 
         const isHost = !window.location.pathname.endsWith('viewer.html');
         const coopState = getCoopState();
-        const senderName = isHost ? 'Streamer' : (coopState.isPlayer2 ? 'Player 2' : `Amigo ${myId ? myId.slice(0, 4) : ''}`);
+        const senderName = isRoomMode() && roomManager?.userName
+          ? roomManager.userName
+          : (isHost ? 'Streamer' : (coopState.isPlayer2 ? 'Player 2' : (myId ? `Amigo ${myId.slice(0, 4)}` : 'Espectador')));
         const xPercent = Math.random() * 70 + 15;
 
         floatingReactionsManager.spawnReaction({ emoji, xPercent, senderName });
@@ -3933,7 +4014,7 @@ export function initFloatingReactions() {
           xPercent,
           senderName
         });
-      });
+      }, { signal });
     });
   }
 }

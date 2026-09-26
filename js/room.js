@@ -12,8 +12,8 @@ export const MASTER_SUFFIX = '_host';
 export const MAX_ROOM_MEMBERS = 16;
 export const MAX_PENDING_ROOM_CONNECTIONS = 16;
 export const MAX_ROOM_MESSAGE_BYTES = 64 * 1024;
-export const ROOM_HEARTBEAT_INTERVAL_MS = 3000;
-export const ROOM_MEMBER_TIMEOUT_MS = 10000;
+export const ROOM_HEARTBEAT_INTERVAL_MS = 4000;
+export const ROOM_MEMBER_TIMEOUT_MS = 30000;
 
 /**
  * Sanitiza o ID da sala para garantir caracteres seguros
@@ -75,9 +75,10 @@ function isWithinMessageLimit(payload) {
 }
 
 export class RoomManager {
-  constructor({ roomId = 'general', userName = 'Amigo', roomPin = null, roomKey = null, onStateChange } = {}) {
+  constructor({ roomId = 'general', userName = null, clientSessionId = null, roomPin = null, roomKey = null, onStateChange } = {}) {
     this.roomId = sanitizeRoomId(roomId);
-    this.userName = typeof userName === 'string' ? sanitizeText(userName).trim().slice(0, 30) || 'Amigo' : 'Amigo';
+    this.clientSessionId = clientSessionId || null;
+    this.userName = typeof userName === 'string' && userName.trim() ? sanitizeText(userName).trim().slice(0, 30) : null;
     this.roomPin = roomPin ? String(roomPin).trim() : null;
     this.roomKey = typeof roomKey === 'string' && /^[A-Za-z0-9_-]{16,128}$/.test(roomKey) ? roomKey : null;
     this.onStateChange = onStateChange || (() => {});
@@ -165,10 +166,14 @@ export class RoomManager {
     this.isMaster = isMaster;
     this.isInRoom = true;
 
-    // Adiciona a si mesmo na lista de membros
+    // Adiciona a si mesmo na lista de membros com identificação segura
+    const fallbackName = this.isMaster ? 'Host' : `Amigo ${this.myPeerId.slice(-4)}`;
+    const effectiveName = this.userName || fallbackName;
+
     const selfMember = {
       peerId: this.myPeerId,
-      name: this.userName,
+      name: effectiveName,
+      clientSessionId: this.clientSessionId || null,
       isMaster: this.isMaster,
       isMuted: false,
       isDeafened: false,
@@ -221,7 +226,8 @@ export class RoomManager {
     if (!this.members.has(peerId)) {
       const newMember = {
         peerId,
-        name: typeof initialInfo.name === 'string' ? sanitizeText(initialInfo.name).slice(0, 30) : `Amigo ${peerId.slice(-4)}`,
+        name: typeof initialInfo.name === 'string' && initialInfo.name.trim() ? sanitizeText(initialInfo.name).slice(0, 30) : `Amigo ${peerId.slice(-4)}`,
+        clientSessionId: initialInfo.clientSessionId || null,
         isMaster: Boolean(initialInfo.isMaster),
         isMuted: Boolean(initialInfo.isMuted),
         isDeafened: Boolean(initialInfo.isDeafened),
@@ -238,8 +244,11 @@ export class RoomManager {
     } else {
       const existing = this.members.get(peerId);
       existing.lastSeen = Date.now();
-      if (initialInfo.name) {
+      if (initialInfo.name && initialInfo.name.trim()) {
         existing.name = sanitizeText(initialInfo.name).slice(0, 30);
+      }
+      if (initialInfo.clientSessionId) {
+        existing.clientSessionId = initialInfo.clientSessionId;
       }
     }
     return true;
@@ -261,6 +270,10 @@ export class RoomManager {
    */
   removeMember(peerId) {
     if (!peerId) return;
+    if (peerId === this.myPeerId) {
+      console.warn(`[RoomManager] Bloqueada tentativa de remover o próprio usuário local: ${peerId}`);
+      return;
+    }
 
     this.pendingConnections.delete(peerId);
     this.authenticatedPeers.delete(peerId);
@@ -363,11 +376,21 @@ export class RoomManager {
           }
         }
 
-        const cleanName = typeof message.name === 'string' ? sanitizeText(message.name).slice(0, 30) : `Amigo ${senderPeerId.slice(-4)}`;
-        // Se um usuário com o mesmo nome relogou com novo ID, limpa a sessão antiga
+        const cleanName = typeof message.name === 'string' && message.name.trim()
+          ? sanitizeText(message.name).trim().slice(0, 30)
+          : `Amigo ${senderPeerId.slice(-4)}`;
+
+        const isGenericName = ['você', 'voce', 'amigo', 'host', 'visitante', 'guest'].includes(cleanName.toLowerCase()) || cleanName.startsWith('Amigo ');
+
+        // Se um usuário com a mesma sessão de aba (F5/relog) ou mesmo nome customizado não-genérico relogou com novo ID, limpa a sessão antiga
         for (const [existingPeerId, existingMember] of this.members.entries()) {
-          if (existingPeerId !== senderPeerId && existingMember.name === cleanName) {
-            console.log(`[RoomManager] Usuário "${cleanName}" relogou com novo ID (${senderPeerId}). Limpando sessão anterior (${existingPeerId}).`);
+          if (existingPeerId === this.myPeerId || existingPeerId === senderPeerId) continue;
+
+          const isSameSession = Boolean(message.clientSessionId && existingMember.clientSessionId && existingMember.clientSessionId === message.clientSessionId);
+          const isSameCustomName = Boolean(!isGenericName && cleanName.length >= 3 && existingMember.name?.toLowerCase() === cleanName.toLowerCase());
+
+          if (isSameSession || isSameCustomName) {
+            console.log(`[RoomManager] Relog detectado para "${cleanName}" (${senderPeerId}). Purgando peer fantasma anterior (${existingPeerId}).`);
             this.removeMember(existingPeerId);
             this.broadcast({
               type: 'ROOM_MEMBER_LEFT',
@@ -381,6 +404,7 @@ export class RoomManager {
         const memberInfo = {
           peerId: senderPeerId,
           name: cleanName,
+          clientSessionId: message.clientSessionId || null,
           isMaster: false,
           isMuted: Boolean(message.isMuted),
           isDeafened: Boolean(message.isDeafened),
@@ -484,8 +508,15 @@ export class RoomManager {
             if (m && isValidPeerId(m.peerId) && m.peerId !== this.myPeerId) {
               const prev = this.members.get(m.peerId);
               if (!prev && this.members.size >= MAX_ROOM_MEMBERS) return;
-              const cleanName = typeof m.name === 'string' ? sanitizeText(m.name).slice(0, 30) : (prev ? prev.name : `Amigo ${m.peerId.slice(-4)}`);
-              const updatedMember = { ...prev, ...m, peerId: m.peerId, name: cleanName };
+              const cleanName = typeof m.name === 'string' && m.name.trim() ? sanitizeText(m.name).slice(0, 30) : (prev ? prev.name : `Amigo ${m.peerId.slice(-4)}`);
+              const updatedMember = {
+                ...prev,
+                ...m,
+                peerId: m.peerId,
+                name: cleanName,
+                clientSessionId: m.clientSessionId || (prev ? prev.clientSessionId : null),
+                lastSeen: Date.now()
+              };
               this.members.set(m.peerId, updatedMember);
               this.authenticatedPeers.add(m.peerId);
 
@@ -518,8 +549,13 @@ export class RoomManager {
         }
         if (message.member && isValidPeerId(message.member.peerId) && message.member.peerId !== this.myPeerId) {
           if (!this.members.has(message.member.peerId) && this.members.size >= MAX_ROOM_MEMBERS) return true;
-          const cleanName = typeof message.member.name === 'string' ? sanitizeText(message.member.name).slice(0, 30) : `Amigo ${message.member.peerId.slice(-4)}`;
-          const safeMember = { ...message.member, name: cleanName };
+          const cleanName = typeof message.member.name === 'string' && message.member.name.trim() ? sanitizeText(message.member.name).slice(0, 30) : `Amigo ${message.member.peerId.slice(-4)}`;
+          const safeMember = {
+            ...message.member,
+            name: cleanName,
+            clientSessionId: message.member.clientSessionId || null,
+            lastSeen: Date.now()
+          };
           this.members.set(message.member.peerId, safeMember);
           this.authenticatedPeers.add(message.member.peerId);
           // Se havia uma conexão pendente deste membro aguardando confirmação do coordenador, promove-a agora
@@ -823,10 +859,16 @@ export class RoomManager {
         conn.peerConnection?.iceConnectionState === 'failed'
       );
 
+      const isConnHealthy = conn && conn.open && conn.peerConnection?.connectionState === 'connected';
+
       const lastSeen = member.lastSeen || member.joinedAt || now;
       const isTimedOut = (now - lastSeen) > this.memberTimeoutMs;
 
-      if (isConnDead || (this.isMaster && isTimedOut) || (peerId === this.masterPeerId && isTimedOut)) {
+      // Poda segura:
+      // - Se a conexão estiver explicitamente morta (fechada ou com falha de ICE)
+      // - Se timeout foi atingido (30s) e a conexão NÃO estiver conectada de forma saudável
+      // - Um guest NUNCA remove o Master apenas por timeout de batimento enquanto a conexão WebRTC estiver viva
+      if (isConnDead || (!isConnHealthy && isTimedOut && this.isMaster)) {
         deadPeers.push(peerId);
       }
     });

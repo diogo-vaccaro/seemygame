@@ -20,6 +20,10 @@ export class MockMediaStream {
     this._tracks = [...tracks];
   }
 
+  get active() {
+    return this._tracks.length > 0 && this._tracks.some(t => t.readyState === 'live');
+  }
+
   getVideoTracks() {
     return this._tracks.filter(t => t.kind === 'video');
   }
