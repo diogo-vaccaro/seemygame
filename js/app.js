@@ -670,14 +670,58 @@ if (bitrateSlider) {
   });
 }
 
+// Sincroniza capacidades do sistema para opções de áudio
+export async function syncAudioModeCapabilities() {
+  if (!audioModeSelect) return;
+  const processOption = audioModeSelect.querySelector('option[value="process"]');
+  if (!processOption) return;
+
+  if (isDesktopApp()) {
+    try {
+      const caps = await getNativeCaptureCapabilities();
+      if (!caps.supports_process_audio) {
+        processOption.disabled = true;
+        processOption.text = 'Áudio da Janela (Requer Windows 11 / Build 22000+)';
+        if (audioModeSelect.value === 'process') {
+          audioModeSelect.value = 'system';
+        }
+      }
+    } catch (_) {}
+  } else {
+    // No navegador web em Windows 10, captura de áudio por janela isolada é rejeitada pelo Chromium
+    processOption.disabled = true;
+    processOption.text = 'Áudio da Janela (Requer App Desktop Windows 11+)';
+    if (audioModeSelect.value === 'process') {
+      audioModeSelect.value = 'system';
+    }
+  }
+}
+
 // Hot Swapping dinâmico de fonte de áudio ao vivo sem desconectar espectadores
 if (audioModeSelect) {
   let activeConfirmedAudioMode = audioModeSelect.value || 'system';
 
   audioModeSelect.addEventListener('change', async (e) => {
     const previousMode = activeConfirmedAudioMode;
-    const newMode = e.target.value;
+    let newMode = e.target.value;
     const isLiveNative = isDesktopApp() && activeNativeCaptureProvider?.session?.sessionId;
+
+    if (newMode === 'process') {
+      if (isDesktopApp()) {
+        try {
+          const caps = await getNativeCaptureCapabilities();
+          if (!caps.supports_process_audio) {
+            showToast('Áudio por processo requer Windows 11+. Alternando para áudio do jogo (sistema).', 'info', 4500);
+            newMode = 'system';
+            audioModeSelect.value = 'system';
+          }
+        } catch (_) {}
+      } else {
+        showToast('Áudio da janela isolada requer Windows 11. Alternando para áudio do jogo (sistema).', 'info', 4500);
+        newMode = 'system';
+        audioModeSelect.value = 'system';
+      }
+    }
 
     // Se captura nativa desktop estiver ativa, reconfigura no backend primeiro e valida
     if (isLiveNative) {
@@ -3213,7 +3257,24 @@ export async function startLocalStream(options = {}) {
   let capturedMicStream = null;
 
   try {
-    const wantSystemAudio = (audioMode === 'system' || audioMode === 'process');
+    let effectiveAudioMode = audioMode;
+    if (effectiveAudioMode === 'process') {
+      if (isDesktopApp()) {
+        try {
+          const caps = await getNativeCaptureCapabilities();
+          if (!caps.supports_process_audio) {
+            showToast('Áudio por processo requer Windows 11+. Transmitindo com áudio do jogo (sistema).', 'info', 4500);
+            effectiveAudioMode = 'system';
+            if (audioModeSelect) audioModeSelect.value = 'system';
+          }
+        } catch (_) {}
+      } else {
+        showToast('Áudio da janela isolada requer Windows 11. Transmitindo com áudio do jogo (sistema).', 'info', 4500);
+        effectiveAudioMode = 'system';
+        if (audioModeSelect) audioModeSelect.value = 'system';
+      }
+    }
+    const wantSystemAudio = (effectiveAudioMode === 'system' || effectiveAudioMode === 'process');
 
     if (isDesktopApp() && (options.sourceId || options.sourceType)) {
       showToast('Iniciando captura nativa Direct3D 11...', 'info', 2500);
@@ -3224,7 +3285,7 @@ export async function startLocalStream(options = {}) {
       const result = await nativeProvider.start({
         sourceId: options.sourceId,
         sourceType: options.sourceType || 'window',
-        audioMode: wantSystemAudio ? audioMode : 'none',
+        audioMode: wantSystemAudio ? effectiveAudioMode : 'none',
         videoCodec: chosenCodec,
         h264Encoder: chosenEncoder,
         showCursor: chosenCursor,
@@ -3239,7 +3300,7 @@ export async function startLocalStream(options = {}) {
       try {
         capturedDisplayStream = await requestBrowserDisplayMedia({
           video: videoConstraints,
-          audioMode,
+          audioMode: effectiveAudioMode,
           displaySurface: options.displaySurface,
           monitorTypeSurfaces: options.monitorTypeSurfaces
         });
@@ -3385,7 +3446,12 @@ export async function startLocalStream(options = {}) {
     localStream = null;
 
     if (err.name !== 'NotAllowedError') {
-      showToast(`Erro ao iniciar stream: ${err.message}`, 'error');
+      const errMsg = String(err?.message || '').toLowerCase();
+      if (errMsg.includes('could not start audio source') || errMsg.includes('audio source')) {
+        showToast('⚠️ O navegador não conseguiu capturar o áudio desta janela/tela. Para transmitir com som, selecione "Tela inteira" com "Compartilhar áudio" ou use o modo "Apenas Vídeo" / App Desktop.', 'error', 9000);
+      } else {
+        showToast(`Erro ao iniciar stream: ${err.message}`, 'error');
+      }
     }
   } finally {
     isStartingStream = false;
@@ -3486,6 +3552,9 @@ export async function initDesktopSupport() {
 
   // Escuta candidatos ICE da ponte Rust para espectadores
   await setupNativeBridgeListener();
+
+  // Sincroniza capacidades de áudio (desabilita áudio de janela isolada no Windows 10)
+  await syncAudioModeCapabilities();
 
   const desktopPickerModal = document.getElementById('desktop-picker-modal');
   const desktopWindowsList = document.getElementById('desktop-windows-list');
@@ -4790,6 +4859,9 @@ function initAppDom() {
 
   // Pré-busca credenciais TURN da API serverless em segundo plano se disponível
   fetchIceServersFromApi().catch(() => {});
+
+  // Sincroniza capacidades de áudio com a plataforma (Web / Desktop)
+  syncAudioModeCapabilities().catch(() => {});
 
   // Inicializa suporte e prioridade nativa se estiver rodando em Desktop Tauri
   initDesktopSupport().catch((err) => console.warn('[Desktop Init]', err));

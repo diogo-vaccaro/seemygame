@@ -526,13 +526,27 @@ impl NativeMediaWorker {
             return Err("O áudio loopback WASAPI/Opus não está disponível".to_string());
         }
         if resolved_config.audio_mode == AudioMode::Process && !capabilities.process_audio_available {
-            return Err(
-                "Áudio por processo exige Windows build 20348+ e loopback WASAPI disponível"
-                    .to_string(),
-            );
+            if capabilities.system_audio_available {
+                log::warn!("[Capture] Áudio por processo não suportado neste Windows build. Fazendo fallback para áudio do sistema (WASAPI loopback).");
+                #[cfg(not(test))]
+                crate::system::write_debug_log("[Capture] Áudio por processo não suportado (build < 20348). Fallback para áudio do sistema.");
+                resolved_config.audio_mode = AudioMode::System;
+            } else {
+                return Err(
+                    "Áudio por processo exige Windows build 20348+ e loopback WASAPI disponível"
+                        .to_string(),
+                );
+            }
         }
         if resolved_config.audio_mode == AudioMode::Process && source.process_id.is_none() {
-            return Err("Áudio do processo exige uma fonte de janela com PID validado".to_string());
+            if capabilities.system_audio_available {
+                log::warn!("[Capture] Janela sem PID validado. Fazendo fallback para áudio do sistema.");
+                #[cfg(not(test))]
+                crate::system::write_debug_log("[Capture] Janela sem PID. Fallback para áudio do sistema.");
+                resolved_config.audio_mode = AudioMode::System;
+            } else {
+                return Err("Áudio do processo exige uma fonte de janela com PID validado".to_string());
+            }
         }
         Ok((runtime, resolved_config))
     }
