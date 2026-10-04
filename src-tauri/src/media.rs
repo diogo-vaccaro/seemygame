@@ -162,6 +162,7 @@ mod tests {
     }
     include!("media/cadence_probe.rs");
     include!("media/capture_stage_probe.rs");
+    include!("media/queue_policy_tests.rs");
 
     #[test]
     fn review_r04_port_lease_excludes_competitor_until_drop() {

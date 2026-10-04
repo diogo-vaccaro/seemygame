@@ -88,9 +88,9 @@ pub(crate) fn build_pipeline(
         format!("video/x-raw(memory:{memory}),format=BGRA"),
         "!".to_string(),
         "queue".to_string(),
-        "max-size-buffers=3".to_string(),
-        "max-size-time=50000000".to_string(),
-        "max-size-bytes=0".to_string(),
+    ]);
+    args.extend(config.raw_video_queue.properties().iter().map(|arg| (*arg).to_string()));
+    args.extend([
         "!".to_string(),
         "videorate".to_string(),
         "drop-only=true".to_string(),
@@ -118,9 +118,9 @@ pub(crate) fn build_pipeline(
     }
     args.extend([
         "queue".to_string(),
-        "max-size-buffers=3".to_string(),
-        "max-size-time=50000000".to_string(),
-        "max-size-bytes=0".to_string(),
+    ]);
+    args.extend(config.raw_video_queue.properties().iter().map(|arg| (*arg).to_string()));
+    args.extend([
         "!".to_string(),
     ]);
 

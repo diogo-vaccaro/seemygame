@@ -150,6 +150,37 @@ impl CaptureBackend {
     }
 }
 
+/// Applies only to uncompressed video before the encoder. Audio and encoded RTP
+/// must not inherit this dropping policy. Keep the established default until E2E
+/// validation of audio, recovery and replay completes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RawVideoQueuePolicy {
+    #[default]
+    Bounded,
+    Latest,
+}
+
+impl RawVideoQueuePolicy {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "bounded" => Ok(Self::Bounded),
+            "latest" => Ok(Self::Latest),
+            _ => Err("Política de fila de vídeo inválida; use bounded ou latest".into()),
+        }
+    }
+
+    pub const fn as_str(self) -> &'static str {
+        match self { Self::Bounded => "bounded", Self::Latest => "latest" }
+    }
+
+    pub const fn properties(self) -> &'static [&'static str] {
+        match self {
+            Self::Bounded => &["max-size-buffers=3", "max-size-time=50000000", "max-size-bytes=0"],
+            Self::Latest => &["max-size-buffers=1", "max-size-time=0", "max-size-bytes=0", "leaky=downstream"],
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct MediaWorkerConfig {
     pub codec: VideoCodec,
@@ -163,6 +194,7 @@ pub struct MediaWorkerConfig {
     pub gop_size: Option<u32>,
     pub capture_api: Option<String>,
     pub capture_backend: CaptureBackend,
+    pub raw_video_queue: RawVideoQueuePolicy,
     pub exclude_process_id: Option<u32>,
 }
 
@@ -180,6 +212,7 @@ impl Default for MediaWorkerConfig {
             gop_size: None,
             capture_api: None,
             capture_backend: CaptureBackend::Auto,
+            raw_video_queue: RawVideoQueuePolicy::default(),
             exclude_process_id: None,
         }
     }
@@ -210,6 +243,9 @@ impl MediaWorkerConfig {
         // Auto prefers D3D12 for H.264/NVENC; explicit values are diagnostic overrides.
         if let Ok(value) = env::var("SEEMYGAME_NATIVE_CAPTURE_BACKEND") {
             config.capture_backend = CaptureBackend::parse(&value)?;
+        }
+        if let Ok(value) = env::var("SEEMYGAME_NATIVE_RAW_QUEUE") {
+            config.raw_video_queue = RawVideoQueuePolicy::parse(&value)?;
         }
 
         if let Ok(value) = env::var("SEEMYGAME_NATIVE_SHOW_CURSOR") {
