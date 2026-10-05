@@ -1,7 +1,7 @@
-<section class="streaming-options" aria-label="Codec, encoder e API de captura">
+<section class="streaming-options" aria-label="Opções avançadas de transmissão">
   <div class="streaming-options-heading">
     <h3>Como seu vídeo é transmitido</h3>
-    <p>O codec define o formato. O encoder comprime. A API captura a imagem.</p>
+    <p>O método captura a imagem. A API gráfica a processa. O encoder comprime no formato do codec.</p>
   </div>
   <div class="streaming-option">
     <div class="streaming-option-label">
@@ -53,8 +53,8 @@
   </div>
   <div id="capture-backend-group" class="streaming-option">
     <div class="streaming-option-label">
-      <label for="capture-backend-select">API de captura <span>Caminho gráfico</span></label>
-      <button type="button" class="streaming-help-button" data-streaming-help="capture-api-help" aria-label="Entender as APIs de captura" aria-describedby="capture-api-help" aria-expanded="false">?</button>
+      <label for="capture-backend-select">API gráfica <span>Caminho de processamento</span></label>
+      <button type="button" class="streaming-help-button" data-streaming-help="capture-api-help" aria-label="Entender as APIs gráficas" aria-describedby="capture-api-help" aria-expanded="false">?</button>
     </div>
     <select id="capture-backend-select" class="custom-id-field" aria-describedby="capture-backend-note">
       <option value="auto" selected>Automática — D3D12 quando compatível</option>
@@ -63,8 +63,8 @@
     </select>
     <p id="capture-backend-note" class="streaming-option-note"></p>
     <div id="capture-api-help" class="streaming-option-tooltip" role="tooltip" popover="manual" hidden>
-      <strong>API: como a imagem chega ao encoder</strong>
-      <p>Direct3D 11 e 12 são APIs gráficas, não codecs nem encoders. As janelas são capturadas por Windows Graphics Capture (WGC).</p>
+      <strong>API gráfica: como os frames são processados</strong>
+      <p>Direct3D 11 e 12 são APIs gráficas, não métodos de captura, codecs nem encoders. WGC/DXGI são escolhidos separadamente. Nenhuma dessas opções garante prioridade sobre o jogo.</p>
       <dl>
         <dt>Automática</dt><dd>Prefere D3D12 com H.264/NVENC e plugins compatíveis. Se esse caminho falhar, pode retornar a D3D11.</dd>
         <dt>Direct3D 12</dt><dd>Seleciona explicitamente captura e conversão D3D12. No pipeline atual, entrega os frames ao encoder NVENC via memória D3D11. Exige H.264/NVENC e não faz fallback automático.</dd>
@@ -72,5 +72,26 @@
       </dl>
     </div>
   </div>
-  <p class="streaming-options-footer">O diagnóstico confirma o codec, encoder e caminho realmente ativos. Alterações de codec, encoder ou API passam a valer ao reiniciar a transmissão.</p>
+  <div id="capture-method-group" class="streaming-option">
+    <div class="streaming-option-label">
+      <label for="capture-method-select">Método de captura <span>Como a imagem é obtida</span></label>
+      <button type="button" class="streaming-help-button" data-streaming-help="capture-method-help" aria-label="Entender WGC e DXGI" aria-describedby="capture-method-help" aria-expanded="false">?</button>
+    </div>
+    <select id="capture-method-select" class="custom-id-field" aria-describedby="capture-method-note">
+      <option value="auto" selected>Automático — WGC atualmente</option>
+      <option value="wgc">WGC — janela ou monitor</option>
+      <option value="dxgi">DXGI — somente monitor inteiro</option>
+    </select>
+    <p id="capture-method-note" class="streaming-option-note"></p>
+    <div id="capture-method-help" class="streaming-option-tooltip" role="tooltip" popover="manual" hidden>
+      <strong>Método: de onde vêm os frames</strong>
+      <dl>
+        <dt>Automático</dt><dd>Usa WGC para janelas e monitores. Esse padrão será reavaliado após os testes de DXGI em jogos reais.</dd>
+        <dt>WGC — Windows Graphics Capture</dt><dd>Captura uma janela específica ou um monitor. É necessário para compartilhar somente uma janela.</dd>
+        <dt>DXGI — Desktop Duplication</dt><dd>Captura o monitor inteiro, incluindo todas as janelas que aparecerem nele. Pode melhorar a fluidez sob carga, mas depende da GPU, do driver e do jogo. Não é uma captura isolada de janela.</dd>
+      </dl>
+      <p>Disponível no app desktop. A escolha é aplicada ao iniciar a transmissão; não garante prioridade de GPU/CPU nem altera o codec ou encoder.</p>
+    </div>
+  </div>
+  <p class="streaming-options-footer">O diagnóstico confirma o codec, encoder e caminho realmente ativos. Alterações de codec, encoder, API gráfica ou método de captura passam a valer ao reiniciar a transmissão.</p>
 </section>

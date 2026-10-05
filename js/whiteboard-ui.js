@@ -1,4 +1,5 @@
 import { processImageFile } from './whiteboard.js';
+import { sendWhiteboardSnapshot } from './whiteboard/transfer.js';
 
 export function bindWhiteboardUI(manager, {
   broadcast = () => {},
@@ -113,10 +114,10 @@ export function bindWhiteboardUI(manager, {
     if ((event.ctrlKey || event.metaKey) && ['z', 'Z'].includes(event.key)) {
       event.preventDefault();
       const changed = event.shiftKey ? manager.redo() : manager.undo();
-      if (changed) broadcast({ type: 'WHITEBOARD_SYNC', elements: manager.elements });
+      if (changed) sendWhiteboardSnapshot(manager.elements, broadcast);
     } else if ((event.ctrlKey || event.metaKey) && ['y', 'Y'].includes(event.key)) {
       event.preventDefault();
-      if (manager.redo()) broadcast({ type: 'WHITEBOARD_SYNC', elements: manager.elements });
+      if (manager.redo()) sendWhiteboardSnapshot(manager.elements, broadcast);
     } else if ((event.ctrlKey || event.metaKey) && event.key === '0') {
       event.preventDefault();
       manager.resetView();
@@ -174,8 +175,8 @@ export function bindWhiteboardUI(manager, {
   bindOptions('#wb-bg-group .wb-opt-btn', 'bg', (mode) => manager.setBackgroundMode(mode), (mode) => {
     modal.style.background = mode === 'transparent' ? 'transparent' : mode === 'light' ? '#f8fafc' : '#12131c';
   });
-  click('wb-undo-btn', () => { if (manager.undo()) broadcast({ type: 'WHITEBOARD_SYNC', elements: manager.elements }); });
-  click('wb-redo-btn', () => { if (manager.redo()) broadcast({ type: 'WHITEBOARD_SYNC', elements: manager.elements }); });
+  click('wb-undo-btn', () => { if (manager.undo()) sendWhiteboardSnapshot(manager.elements, broadcast); });
+  click('wb-redo-btn', () => { if (manager.redo()) sendWhiteboardSnapshot(manager.elements, broadcast); });
   click('wb-clear-btn', () => { if (typeof confirm !== 'function' || confirm('Deseja realmente limpar toda a lousa?')) manager.clear(true); });
   click('wb-export-btn', async () => {
     try {

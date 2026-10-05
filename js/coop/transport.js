@@ -85,12 +85,14 @@ export function initCompanionAgentConnection(compatibilityContext, token = null,
 
   try {
     const ws = new WebSocket('ws://localhost:9876');
+    compatibilityContext.companionSocket = ws;
     ws.onopen = () => {
-      compatibilityContext.companionSocket = ws;
+      if (compatibilityContext.companionSocket !== ws) { try { ws.close(); } catch (_) {} return; }
       compatibilityContext.isCompanionConnected = false;
       ws.send(JSON.stringify({ type: 'AUTH', token: authToken }));
     };
     ws.onmessage = (event) => {
+      if (compatibilityContext.companionSocket !== ws) return;
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'AUTH_OK') {
@@ -134,13 +136,16 @@ export function initCompanionAgentConnection(compatibilityContext, token = null,
       } catch (e) {}
     };
     ws.onclose = () => {
-      if (compatibilityContext.companionSocket === ws) compatibilityContext.companionSocket = null;
+      if (compatibilityContext.companionSocket !== ws) return;
+      compatibilityContext.companionSocket = null;
       compatibilityContext.isCompanionConnected = false;
       compatibilityContext.companionCapabilities = { keyboard: false, mouse: false, gamepad: false, mouseCoordinateSpace: 'primary-screen' };
       compatibilityContext.notifyStateChange();
     };
     ws.onerror = () => {
-      if (compatibilityContext.companionSocket === ws) compatibilityContext.companionSocket = null;
+      if (compatibilityContext.companionSocket !== ws) return;
+      compatibilityContext.companionSocket = null;
+      try { ws.close(); } catch (_) {}
       compatibilityContext.isCompanionConnected = false;
       compatibilityContext.companionCapabilities = { keyboard: false, mouse: false, gamepad: false, mouseCoordinateSpace: 'primary-screen' };
       compatibilityContext.notifyStateChange();
@@ -222,7 +227,8 @@ export function dispatchHostMouseInput(compatibilityContext, data) {
 export function dispatchHostGamepadInput(compatibilityContext, data) {
   // 1. Desktop Tauri: despacha diretamente para o backend nativo ViGEmBus
   if (compatibilityContext.isTauriEnvironment()) {
-    const slot = Number(data.slot) || 1;
+    const slot = Number(data.slot ?? 1);
+    if (!Number.isInteger(slot) || slot < 0 || slot > 3) return;
     const report = {
       buttons: Array.isArray(data.state?.buttons) ? data.state.buttons : (Array.isArray(data.buttons) ? data.buttons : []),
       triggers: Array.isArray(data.state?.triggers) ? data.state.triggers : (Array.isArray(data.triggers) ? data.triggers : null),
@@ -248,7 +254,10 @@ export function dispatchHostGamepadInput(compatibilityContext, data) {
 export function dispatchHostInputReset(compatibilityContext, { unplugVirtualGamepads = true, slot = null } = {}) {
   const scoped = Number.isInteger(slot) && slot >= 0 && slot <= 3;
   if (compatibilityContext.isTauriEnvironment()) {
-    if (unplugVirtualGamepads) compatibilityContext.unplugAllVirtualGamepads().catch(() => {});
+    if (unplugVirtualGamepads) {
+      if (scoped) compatibilityContext.unplugVirtualGamepad(slot).catch(() => {});
+      else compatibilityContext.unplugAllVirtualGamepads().catch(() => {});
+    }
     else for (const targetSlot of scoped ? [slot] : compatibilityContext.coopSlots.keys()) {
       compatibilityContext.updateVirtualGamepad(targetSlot, { buttons: new Array(17).fill(false), triggers: [0, 0], axes: [0, 0, 0, 0] }).catch(() => {});
     }

@@ -131,6 +131,7 @@ setBackgroundMode(mode) {
       this.saveUndoState();
       this.redoStack = [];
       this.elements[idx] = element;
+      this.pruneImageCache();
       this.render();
 
       if (broadcast && typeof this.onElementUpdated === 'function') {
@@ -147,6 +148,7 @@ setBackgroundMode(mode) {
       this.saveUndoState();
       this.redoStack = [];
       const removed = this.elements.splice(idx, 1)[0];
+      this.pruneImageCache();
       if (this.selectedElementId === elementId) {
         this.selectedElementId = null;
       }
@@ -170,6 +172,7 @@ undo() {
     if (this.undoStack.length === 0) return false;
     this.redoStack.push([...this.elements]);
     this.elements = this.undoStack.pop();
+    this.pruneImageCache();
     this.selectedElementId = null;
     this.render();
     return true;
@@ -179,6 +182,7 @@ undo() {
     if (this.redoStack.length === 0) return false;
     this.saveUndoState();
     this.elements = this.redoStack.pop();
+    this.pruneImageCache();
     this.selectedElementId = null;
     this.render();
     return true;
@@ -189,6 +193,7 @@ undo() {
     this.saveUndoState();
     this.redoStack = [];
     this.elements = [];
+    this.pruneImageCache();
     this.selectedElementId = null;
     this.render();
 
@@ -201,6 +206,7 @@ setElements(elements) {
     this.elements = Array.isArray(elements)
       ? elements.filter(isSafeWhiteboardElement).slice(0, MAX_WHITEBOARD_ELEMENTS)
       : [];
+    this.pruneImageCache();
     this.selectedElementId = null;
     this.render();
   }

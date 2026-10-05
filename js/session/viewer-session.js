@@ -22,6 +22,7 @@ import {
   isValidPeerId 
 } from '../ui.js';
 import { createCoopController } from '../coop/controller.js';
+import { toggleCoopCardControl } from '../coop/card-action.js';
 import { ChatManager } from '../chat.js';
 import { VoiceManager } from '../voice.js';
 import { DiscordUIController } from '../discord-ui.js';
@@ -71,8 +72,12 @@ const viewerState = {
 };
 
 const watchingHosts = new Map();
+let peerInitialization = null;
+let readyPeer = null;
+let pendingPinHostId = null;
 
 function promptViewerPin(targetId, errorMsg = null) {
+  pendingPinHostId = targetId;
   viewerState.targetHostId = targetId;
   const modal = document.getElementById('pin-prompt-modal');
   const input = document.getElementById('viewer-pin-input');
@@ -96,6 +101,7 @@ function promptViewerPin(targetId, errorMsg = null) {
 }
 
 function hideViewerPinModal() {
+  pendingPinHostId = null;
   const modal = document.getElementById('pin-prompt-modal');
   const errorEl = document.getElementById('viewer-pin-error');
   if (modal) modal.style.display = 'none';
@@ -116,8 +122,10 @@ function submitViewerPin(pin) {
     return false;
   }
 
-  if (viewerState.activeConn && viewerState.activeConn.open) {
-    sendSessionMessage(viewerState.session, viewerState.activeConn, {
+  const target = pendingPinHostId || viewerState.targetHostId;
+  const conn = watchingHosts.get(target)?.conn || (target && viewerState.activeConn?.peer === target ? viewerState.activeConn : null);
+  if (conn?.open) {
+    sendSessionMessage(viewerState.session, conn, {
       type: PROTOCOL_TYPES.MEDIA.REQUEST_STREAM,
       pin: trimmed
     });
@@ -146,23 +154,27 @@ async function connectToStreamer(streamerId, pin = null, session = viewerState.s
   createPlaceholderCard(streamerId, `Streamer: ${streamerId.slice(0, 8)}`);
   updateCardStatus(streamerId, 'Conectando ao Streamer...');
 
-  if (!viewerState.peer || viewerState.peer.destroyed) {
-    await initViewerPeer(session);
-  }
+  const peer = peerInitialization || !viewerState.peer || viewerState.peer.destroyed
+    ? await initViewerPeer(session) : viewerState.peer;
+  if (session?.isDisposed) return false;
 
-  const conn = viewerState.peer.connect(streamerId, { 
+  const conn = peer.connect(streamerId, {
     reliable: true,
     metadata: { role: 'viewer', pin: pin || '' }
   });
 
+  const previous = watchingHosts.get(streamerId);
   viewerState.activeConn = conn;
   watchingHosts.set(streamerId, {
     state: 'CONNECTING',
     conn,
     call: null
   });
+  try { previous?.call?.close(); previous?.conn?.close(); } catch (_) {}
+  const isCurrent = () => !session?.isDisposed && watchingHosts.get(streamerId)?.conn === conn;
 
   conn.on('open', () => {
+    if (!isCurrent()) return;
     updateCardStatus(streamerId, 'Conectado! Aguardando vídeo...');
     const hostEntry = watchingHosts.get(streamerId);
     if (hostEntry) hostEntry.state = 'CONNECTED';
@@ -170,7 +182,7 @@ async function connectToStreamer(streamerId, pin = null, session = viewerState.s
     // Notifica o host sobre a conexão e solicita transmissão
     sendSessionMessage(viewerState.session, conn, {
       type: PROTOCOL_TYPES.MEDIA.REQUEST_STREAM,
-      peerId: viewerState.peer.id,
+      peerId: peer.id,
       pin: pin || ''
     });
 
@@ -178,18 +190,25 @@ async function connectToStreamer(streamerId, pin = null, session = viewerState.s
   });
 
   conn.on('data', (data) => {
+    if (!isCurrent()) return;
     if (data && typeof data === 'object') {
       if (data.type === PROTOCOL_TYPES.ADMISSION.PIN_REQUIRED) {
+        const entry = watchingHosts.get(streamerId);
+        entry.isAuthenticated = false; entry.requiresPin = true; entry.pinError = data.error;
         viewerState.isPinRequired = true;
         viewerState.isAuthenticated = false;
-        promptViewerPin(streamerId, data.error);
+        if (!pendingPinHostId || pendingPinHostId === streamerId) promptViewerPin(streamerId, data.error);
         (session?.eventBus || globalBus).emit('pin:required', { streamerId, error: data.error });
         return;
       }
       if (data.type === PROTOCOL_TYPES.ADMISSION.PIN_ACCEPTED) {
-        viewerState.isPinRequired = false;
-        viewerState.isAuthenticated = true;
-        hideViewerPinModal();
+        const entry = watchingHosts.get(streamerId);
+        entry.isAuthenticated = true; entry.requiresPin = false;
+        if (pendingPinHostId === streamerId) hideViewerPinModal();
+        const next = [...watchingHosts].find(([, host]) => host.requiresPin);
+        viewerState.isPinRequired = Boolean(next);
+        viewerState.isAuthenticated = Boolean(watchingHosts.get(viewerState.activeConn?.peer)?.isAuthenticated);
+        if (!pendingPinHostId && next) promptViewerPin(next[0], next[1].pinError);
         showToast('PIN aceito! Conectando à transmissão...', 'success');
         (session?.eventBus || globalBus).emit('pin:accepted', { streamerId });
         return;
@@ -209,15 +228,24 @@ async function connectToStreamer(streamerId, pin = null, session = viewerState.s
   });
 
   conn.on('close', () => {
+    if (watchingHosts.get(streamerId)?.conn !== conn) return;
+    const call = watchingHosts.get(streamerId).call;
+    try { call?.close(); } catch (_) {}
+    if (viewerState.activeCall === call) viewerState.activeCall = null;
+    if (viewerState.activeConn === conn) viewerState.activeConn = null;
     updateCardStatus(streamerId, 'Desconectado do streamer.');
     removeVideoCard(streamerId);
     watchingHosts.delete(streamerId);
-    viewerState.isAuthenticated = false;
-    viewerState.isPinRequired = false;
+    if (pendingPinHostId === streamerId) hideViewerPinModal();
+    const next = [...watchingHosts].find(([, host]) => host.requiresPin);
+    viewerState.isAuthenticated = Boolean(watchingHosts.get(viewerState.activeConn?.peer)?.isAuthenticated);
+    viewerState.isPinRequired = Boolean(next);
+    if (!pendingPinHostId && next) promptViewerPin(next[0], next[1].pinError);
     (session?.eventBus || globalBus).emit('viewer:disconnected', { streamerId });
   });
 
   conn.on('error', (err) => {
+    if (!isCurrent()) return;
     console.error(`[Viewer] Erro na conexão com ${streamerId}:`, err);
     updateCardStatus(streamerId, 'Erro na conexão P2P.');
     showToast(`Erro ao conectar com ${streamerId.slice(0, 6)}`, 'error');
@@ -227,6 +255,24 @@ async function connectToStreamer(streamerId, pin = null, session = viewerState.s
 }
 
 async function initViewerPeer(session = viewerState.session) {
+  if (peerInitialization) return peerInitialization;
+  if (readyPeer && readyPeer === viewerState.peer && !readyPeer.destroyed) return readyPeer;
+  let initializedPeer = null;
+  const pending = createViewerPeer(session).then(peer => {
+    initializedPeer = peer;
+    if (!session?.isDisposed && viewerState.peer === peer) readyPeer = peer;
+    return peer;
+  });
+  peerInitialization = pending;
+  session?.registerCleanup(() => {
+    if (peerInitialization === pending) peerInitialization = null;
+    if (initializedPeer && readyPeer === initializedPeer) readyPeer = null;
+  });
+  try { return await pending; }
+  finally { if (peerInitialization === pending) peerInitialization = null; }
+}
+
+async function createViewerPeer(session) {
   if (typeof Peer === 'undefined') {
     throw new Error('PeerJS não está carregado no escopo global.');
   }
@@ -251,8 +297,7 @@ async function initViewerPeer(session = viewerState.session) {
       const callerId = call?.peer;
       const isAuthorized = Boolean(
         callerId && (
-          callerId === viewerState.targetHostId ||
-          (watchingHosts.has(callerId) && watchingHosts.get(callerId).conn?.open)
+          !session?.isDisposed && watchingHosts.get(callerId)?.conn?.open
         )
       );
 
@@ -283,26 +328,26 @@ function handleIncomingStreamCall(call, session = viewerState.session) {
 
   const hostId = call.peer;
   const hostEntry = watchingHosts.get(hostId) || { state: 'CONNECTED', conn: viewerState.activeConn };
+  const previousCall = hostEntry.call;
   hostEntry.call = call;
   watchingHosts.set(hostId, hostEntry);
+  try { previousCall?.close(); } catch (_) {}
+  const isCurrent = () => !session?.isDisposed && watchingHosts.get(hostId)?.call === call;
 
   call.on('stream', (remoteStream) => {
+    if (!isCurrent()) return;
     viewerState.remoteStream = remoteStream;
     const onCoopClick = (targetId) => {
       const conn = watchingHosts.get(targetId)?.conn || viewerState.activeConn;
-      const state = getCoopState();
-      if (state.isPlayer2 || state.pendingApproval) {
-        releaseCoopControl(targetId, conn);
-      } else {
-        requestCoopControl(targetId, conn);
-      }
+      toggleCoopCardControl(coopController, targetId, conn);
     };
-    addOrUpdateVideoCard({ audioScope: viewerState.session?.audioScope,
+    addOrUpdateVideoCard({ session, audioScope: viewerState.session?.audioScope,
       peerId: hostId,
       stream: remoteStream,
       label: `Ao Vivo: ${hostId.slice(0, 8)}`,
       isLocal: false,
-      onCoopClick
+      onCoopClick,
+      onClipClick: sourceId => viewerState.features?.clipEditor?.exportClip(sourceId)
     });
     hideCardLoading(hostId);
 
@@ -318,6 +363,9 @@ function handleIncomingStreamCall(call, session = viewerState.session) {
   });
 
   call.on('close', () => {
+    if (!isCurrent()) return;
+    hostEntry.call = null;
+    if (viewerState.activeCall === call) viewerState.activeCall = null;
     stopStatsMonitor(hostId);
     viewerState.statsMonitorActive = false;
     removeVideoCard(hostId);
@@ -367,8 +415,8 @@ async function initViewerApp(options = {}) {
 
   const features = registerSessionFeatures(session, {
     includeClipping: true,
-    getConnections: () => viewerState.activeConn ? [viewerState.activeConn] : [],
-    isAuthorizedPeer: id => id === viewerState.targetHostId,
+    getConnections: () => [...watchingHosts.values()].map(host => host.conn).filter(conn => conn?.open),
+    isAuthorizedPeer: id => Boolean(watchingHosts.get(id)?.conn?.open),
     role: 'viewer',
     showToast,
     chatManager,
@@ -385,6 +433,7 @@ async function initViewerApp(options = {}) {
     role: 'viewer',
     chatManager,
     voiceManager,
+    isAuthorizedPeer: id => Boolean(watchingHosts.get(id)?.conn?.open),
     isTrustedChatRelayPeer: id =>
       (id === viewerState.targetHostId && viewerState.activeConn?.peer === id && viewerState.activeConn.open) ||
       Boolean(watchingHosts.get(id)?.conn?.open),
@@ -482,6 +531,7 @@ async function initViewerApp(options = {}) {
       onJoinVoice: async () => {
         try {
           const stream = await voiceManager.joinVoice({ peerId: viewerState.peer?.id, name: 'Espectador', role: 'viewer' });
+          if (!stream || !voiceManager.isInVoice || session.isDisposed) return;
           if (viewerState.activeConn?.open) {
             sendSessionMessage(viewerState.session, viewerState.activeConn, { type: 'VOICE_SIGNAL', action: 'VOICE_JOINED', peerId: viewerState.peer?.id, name: 'Espectador', role: 'viewer' });
           }
@@ -543,6 +593,7 @@ async function initViewerApp(options = {}) {
       viewerState.activeCall = null;
       viewerState.activeConn = null;
       viewerState.remoteStream = null;
+      hideViewerPinModal();
       watchingHosts.clear();
       if (viewerState.session === session) viewerState.session = null;
       session.dispose();

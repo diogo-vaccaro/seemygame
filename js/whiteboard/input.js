@@ -208,7 +208,11 @@ attachEvents() {
           const last = pts[pts.length - 1];
           const distSq = (pos.x - last.x) ** 2 + (pos.y - last.y) ** 2;
           if (distSq >= 9) {
-            pts.push({ x: pos.x, y: pos.y });
+            if (pts.length >= MAX_WHITEBOARD_POINTS - 1) {
+              this.addElement(this.currentElement, true);
+              this.currentElement = { ...this.currentElement, id: 'wb_' + Math.random().toString(36).slice(2, 11), points: [{ ...last }] };
+            }
+            this.currentElement.points.push({ x: pos.x, y: pos.y });
             this.render();
           }
         } else {
@@ -287,7 +291,7 @@ attachEvents() {
             const pos = getCanvasPos(e);
             const pts = this.currentElement.points;
             const last = pts[pts.length - 1];
-            if (last && (last.x !== pos.x || last.y !== pos.y)) {
+            if (last && pts.length < MAX_WHITEBOARD_POINTS && (last.x !== pos.x || last.y !== pos.y)) {
               pts.push({ x: pos.x, y: pos.y });
             }
           }

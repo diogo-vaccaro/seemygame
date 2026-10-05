@@ -14,17 +14,18 @@ export async function closeNativeCapturePeer(sessionId) {
     return invokeDesktopCommand('close_native_capture_peer', { sessionId });
 }
 
-export async function createNativeViewerPeer(sessionId, viewerId, offerSdp, iceServers = null) {
+export async function createNativeViewerPeer(sessionId, viewerId, offerSdp, iceServers = null, negotiationId = null) {
     if (!isDesktopApp()) throw new Error('Ponte WebRTC nativa só está disponível no app desktop');
     if (!sessionId || !viewerId || typeof offerSdp !== 'string' || offerSdp.length === 0 || offerSdp.length > 256 * 1024) {
         throw new Error('Parâmetros de oferta SDP do espectador nativo inválidos');
     }
     const payload = { sessionId, viewerId, offerSdp };
+    if (negotiationId) payload.negotiationId = negotiationId;
     if (iceServers) payload.iceServers = iceServers;
     return await invokeDesktopCommand('create_native_viewer_peer', payload);
 }
 
-export async function addNativeViewerIceCandidate(sessionId, viewerId, mlineIndex, candidate) {
+export async function addNativeViewerIceCandidate(sessionId, viewerId, mlineIndex, candidate, negotiationId = null) {
     if (!isDesktopApp()) return null;
     if (!sessionId || !viewerId || !Number.isInteger(Number(mlineIndex)) || typeof candidate !== 'string' || candidate.length > 16 * 1024) {
         throw new Error('Candidato ICE do espectador nativo inválido');
@@ -33,13 +34,14 @@ export async function addNativeViewerIceCandidate(sessionId, viewerId, mlineInde
         sessionId,
         viewerId,
         mlineIndex: Number(mlineIndex),
-        candidate
+        candidate,
+        ...(negotiationId ? { negotiationId } : {})
     });
 }
 
-export async function closeNativeViewerPeer(sessionId, viewerId) {
+export async function closeNativeViewerPeer(sessionId, viewerId, negotiationId = null) {
     if (!isDesktopApp() || !sessionId || !viewerId) return null;
-    return invokeDesktopCommand('close_native_viewer_peer', { sessionId, viewerId });
+    return invokeDesktopCommand('close_native_viewer_peer', { sessionId, viewerId, ...(negotiationId ? { negotiationId } : {}) });
 }
 
 export async function getNativeStreamStats(sessionId, viewerId) {

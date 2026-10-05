@@ -122,7 +122,7 @@ export class NativeCaptureProvider {
     this._operationId = 0;
   }
 
-  async start({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, showCursor = undefined, sourceType = null, source = null, width, height, fps, bitrateKbps, excludeApp = null } = {}) {
+  async start({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, captureApi = null, showCursor = undefined, sourceType = null, source = null, width, height, fps, bitrateKbps, excludeApp = null } = {}) {
     if (!sourceId) throw new Error('Selecione uma janela ou monitor antes de iniciar');
 
     const operationId = ++this._operationId;
@@ -134,10 +134,10 @@ export class NativeCaptureProvider {
       this.codecSelection = choice;
       videoCodec = choice.selected;
     } else if (videoCodec === 'auto') videoCodec = 'h264';
-    this.requestedSettings = { width, height, fps, bitrateKbps, videoCodec, captureBackend, h264Encoder };
+    this.requestedSettings = { width, height, fps, bitrateKbps, videoCodec, captureBackend, captureApi, h264Encoder };
     let nativeState;
     try {
-      nativeState = await startNativeCapture({ sourceId, audioMode, videoCodec, h264Encoder, captureBackend, showCursor, width, height, fps, bitrateKbps, excludeApp });
+      nativeState = await startNativeCapture({ sourceId, audioMode, videoCodec, h264Encoder, captureBackend, captureApi, showCursor, width, height, fps, bitrateKbps, excludeApp });
     } catch (error) {
       throw normalizeCaptureError(error, 'Falha ao iniciar o worker nativo');
     }

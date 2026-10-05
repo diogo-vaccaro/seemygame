@@ -1,4 +1,12 @@
 import { createStatsHud } from '../stats/hud.js';
+const cardDisposals = new WeakMap();
+
+function disposeCard(card) {
+  cardDisposals.get(card)?.();
+  cardDisposals.delete(card);
+  const video = card.querySelector('video');
+  if (video) { video.pause(); video.srcObject = null; }
+}
 /** video-cards: commands receive explicit compatibility ports; no page initialization. */
 export function resolveCardDisplayStream(compatibilityContext, stream, isLocal = false) {
   if (!stream) return stream;
@@ -150,7 +158,7 @@ export function setCardStreamPaused(compatibilityContext, peerId, isPaused, mess
 export function removeVideoCard(compatibilityContext, peerId) {
   const normalizedId = (peerId === 'local-stream') ? 'local-me' : peerId;
   const card = document.getElementById(`card-${normalizedId}`) || document.getElementById(`card-${peerId}`);
-  if (card) card.remove();
+  if (card) { disposeCard(card); card.remove(); }
   compatibilityContext.stopStatsMonitor(normalizedId);
   compatibilityContext.stopAudioAnalyser(normalizedId);
   compatibilityContext.updateGridEmptyState();
@@ -160,9 +168,9 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   const grid = document.getElementById('video-grid');
   if (!grid) return null;
 
-  let stream, peerId, label, isLocal, onDisconnect, onCoopClick, onPanicClick, onClipClick, audioScope;
+  let stream, peerId, label, isLocal, onDisconnect, onCoopClick, onPanicClick, onClipClick, audioScope, session;
   if (optionsOrPeerId && typeof optionsOrPeerId === 'object' && ('stream' in optionsOrPeerId || 'peerId' in optionsOrPeerId)) {
-    ({ stream, peerId, label, isLocal = false, onDisconnect, onCoopClick, onPanicClick, onClipClick, audioScope } = optionsOrPeerId);
+    ({ stream, peerId, label, isLocal = false, onDisconnect, onCoopClick, onPanicClick, onClipClick, audioScope, session } = optionsOrPeerId);
   } else {
     peerId = optionsOrPeerId;
     stream = streamArg;
@@ -199,6 +207,14 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
       }
 
       compatibilityContext.initAudioAnalyser(stream, peerId, audioScope);
+      if (onCoopClick) {
+        const button = card.querySelector('.card-btn-coop');
+        if (button) button.onclick = () => onCoopClick(peerId);
+      }
+      if (onClipClick) {
+        const button = card.querySelector('.card-btn-clip');
+        if (button) button.onclick = () => onClipClick(peerId, stream);
+      }
 
       const playPromise = existingVideo.play();
       if (playPromise !== undefined) {
@@ -226,6 +242,7 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   }
 
   card.dataset.isLocal = isLocal ? 'true' : 'false';
+  disposeCard(card);
   card.innerHTML = '';
 
   // Header do Card
@@ -368,12 +385,21 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   const toggleFullscreen = () => {
     const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
     if (!isFs) {
-      if (video.requestFullscreen) {
-        video.requestFullscreen().catch((err) => {
+      const canvas = document.getElementById('ping-canvas');
+      const stage = canvas?.parentElement?.contains(card) ? canvas.parentElement : card;
+      const resetStage = () => { stage.classList.remove('tactical-fullscreen-stage'); card.classList.remove('fullscreen-card'); };
+      stage.classList.add('tactical-fullscreen-stage'); card.classList.add('fullscreen-card');
+      if (stage.requestFullscreen) {
+        stage.requestFullscreen().then(() => {
+          if (!card.isConnected && document.fullscreenElement === stage) return document.exitFullscreen?.();
+        }).catch((err) => {
+          resetStage();
           console.warn('Falha ao abrir tela cheia:', err);
         });
-      } else if (video.webkitRequestFullscreen) {
-        video.webkitRequestFullscreen();
+      } else if (stage.webkitRequestFullscreen) {
+        stage.webkitRequestFullscreen();
+      } else {
+        resetStage();
       }
     } else {
       if (document.exitFullscreen) {
@@ -637,6 +663,10 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   // Sincroniza indicador de tela cheia
   const handleFsChange = () => {
     const isFs = !!(document.fullscreenElement || document.webkitFullscreenElement);
+    if (!isFs) {
+      card.classList.remove('fullscreen-card');
+      document.querySelectorAll('.tactical-fullscreen-stage').forEach(stage => stage.classList.remove('tactical-fullscreen-stage'));
+    }
     fsBtn.innerText = isFs ? '🗗 Restaurar' : '⛶ Tela Cheia';
     overlayFsBtn.innerHTML = isFs ? '🗗 Restaurar' : '⛶ Tela Cheia';
   };
@@ -645,6 +675,29 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
 
   // Auto-hide suave dos controles no vídeo
   let hideControlsTimer = null;
+  const cleanup = () => {
+    clearTimeout(hideControlsTimer);
+    document.removeEventListener('fullscreenchange', handleFsChange);
+    document.removeEventListener('webkitfullscreenchange', handleFsChange);
+    if (card.classList.contains('fullscreen-card')) {
+      card.closest('.tactical-fullscreen-stage')?.classList.remove('tactical-fullscreen-stage');
+      const stage = document.fullscreenElement || document.webkitFullscreenElement;
+      if (stage?.contains(card)) {
+        document.exitFullscreen?.().catch(() => {});
+        stage.classList.remove('tactical-fullscreen-stage');
+      }
+      card.classList.remove('fullscreen-card');
+    }
+  };
+  let unregister = () => {};
+  const release = () => { cleanup(); unregister(); };
+  cardDisposals.set(card, release);
+  unregister = session?.registerCleanup(() => {
+    if (cardDisposals.get(card) !== release) return;
+    disposeCard(card); card.remove();
+    compatibilityContext.stopStatsMonitor(peerId);
+    compatibilityContext.stopAudioAnalyser(peerId);
+  }) || (() => {});
   const showControls = () => {
     videoWrapper.classList.add('controls-visible');
     if (hideControlsTimer) clearTimeout(hideControlsTimer);

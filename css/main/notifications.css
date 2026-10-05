@@ -33,6 +33,7 @@
   flex-direction: column;
   gap: 10px;
   z-index: 10000;
+  pointer-events: none;
 }.toast {
   background: var(--bg-card);
   border: 1px solid var(--border-color);

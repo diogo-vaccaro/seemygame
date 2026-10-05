@@ -11,13 +11,13 @@ registerConnection(peerId, conn, initialInfo = {}) {
     // Se já temos uma conexão de malha aberta e autenticada com este peer, mantém a existente
     const existingMesh = this.meshConnections.get(peerId);
     if (existingMesh && existingMesh.open && this.authenticatedPeers.has(peerId)) {
-      return true;
+      return existingMesh === conn;
     }
 
     // Se já temos uma conexão pendente aberta (ex: masterConn de saída), não a substitua por conexão reversa
     const existingPending = this.pendingConnections.get(peerId);
     if (existingPending && existingPending !== conn && existingPending.open) {
-      return true;
+      return false;
     }
 
     // Every room connection starts pending until open/authenticated.

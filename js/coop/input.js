@@ -1,7 +1,18 @@
 import { sendCoopMessage } from './message-transport.js';
+import { getVideoContentRect } from '../ui/video-geometry.js';
+const inputStates = new WeakMap();
+const inputState = ports => {
+  if (!inputStates.has(ports)) inputStates.set(ports, { keys: new Map(), buttons: new Set() });
+  return inputStates.get(ports);
+};
+function releaseHeldInputs(ports) {
+  const state = inputState(ports);
+  for (const [code, key] of [...state.keys]) handleKeyUp(ports, { ...key, code });
+  for (const button of [...state.buttons]) handleMouseUp(ports, { button });
+}
 /** input: commands receive explicit compatibility ports; no page initialization. */
 export function handleKeyDown(compatibilityContext, e) {
-  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn || !compatibilityContext.attachedCard) return;
+  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn || !compatibilityContext.attachedCard || compatibilityContext.activeHostCapabilities.keyboard === false) return;
 
   // A13: Ignora captura de teclas se o usuário estiver digitando no chat ou em campos editáveis
   const target = e.target;
@@ -14,6 +25,7 @@ export function handleKeyDown(compatibilityContext, e) {
     e.preventDefault();
   }
 
+  inputState(compatibilityContext).keys.set(e.code, { key: e.key, keyCode: e.keyCode });
   sendCoopMessage(compatibilityContext, compatibilityContext.activeDataConn, {
     type: 'INPUT_KEY',
     slot: compatibilityContext.myAssignedSlot !== null ? compatibilityContext.myAssignedSlot : 1,
@@ -25,11 +37,10 @@ export function handleKeyDown(compatibilityContext, e) {
 }
 
 export function handleKeyUp(compatibilityContext, e) {
-  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn || !compatibilityContext.attachedCard) return;
-  const target = e.target;
-  if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
-    return;
-  }
+  const state = inputState(compatibilityContext);
+  if (!state.keys.has(e.code)) return;
+  state.keys.delete(e.code);
+  if (!compatibilityContext.activeDataConn) return;
 
   sendCoopMessage(compatibilityContext, compatibilityContext.activeDataConn, {
     type: 'INPUT_KEY',
@@ -47,7 +58,7 @@ export function focusControlWrapper(compatibilityContext, e) {
 
 export function handleControlVisibilityChange(compatibilityContext) {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden' && compatibilityContext.isPlayer2 && compatibilityContext.activeDataConn) {
-    try { sendCoopMessage(compatibilityContext, compatibilityContext.activeDataConn, { type: 'INPUT_RESET' }); } catch (e) {}
+    try { sendCoopMessage(compatibilityContext, compatibilityContext.activeDataConn, { type: 'INPUT_RESET', slot: compatibilityContext.myAssignedSlot ?? 1, preserveGamepads: true }); } catch (e) {}
   }
 }
 
@@ -57,7 +68,7 @@ export function handleMouseMove(compatibilityContext, e) {
   const video = compatibilityContext.attachedCard.querySelector('video');
   if (!video) return;
 
-  const rect = video.getBoundingClientRect();
+  const rect = getVideoContentRect(video);
   if (rect.width === 0 || rect.height === 0) return;
 
   // Coordenadas normalizadas (0.0 a 1.0)
@@ -74,7 +85,8 @@ export function handleMouseMove(compatibilityContext, e) {
 }
 
 export function handleMouseDown(compatibilityContext, e) {
-  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn || !compatibilityContext.activeHostCapabilities.mouse === false) return;
+  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn || compatibilityContext.activeHostCapabilities.mouse === false) return;
+  inputState(compatibilityContext).buttons.add(e.button);
   sendCoopMessage(compatibilityContext, compatibilityContext.activeDataConn, {
     type: 'INPUT_MOUSE',
     slot: compatibilityContext.myAssignedSlot !== null ? compatibilityContext.myAssignedSlot : 1,
@@ -84,7 +96,10 @@ export function handleMouseDown(compatibilityContext, e) {
 }
 
 export function handleMouseUp(compatibilityContext, e) {
-  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn || !compatibilityContext.activeHostCapabilities.mouse === false) return;
+  const state = inputState(compatibilityContext);
+  if (!state.buttons.has(e.button)) return;
+  state.buttons.delete(e.button);
+  if (!compatibilityContext.activeDataConn) return;
   sendCoopMessage(compatibilityContext, compatibilityContext.activeDataConn, {
     type: 'INPUT_MOUSE',
     slot: compatibilityContext.myAssignedSlot !== null ? compatibilityContext.myAssignedSlot : 1,
@@ -254,6 +269,10 @@ export function pollGamepads(compatibilityContext, targetIndex = 0) {
     const gp = gamepads[targetIndex] || gamepads[0]; // Captura o controle alvo ou o primeiro conectado
 
     if (gp && gp.connected) {
+      const device = `${gp.index ?? targetIndex}:${gp.id || ''}`;
+      const state = inputState(compatibilityContext);
+      if (state.gamepadDevice && state.gamepadDevice !== device) compatibilityContext.lastGamepadState = null;
+      state.gamepadDevice = device;
       const rawButtons = gp.buttons.map(b => (typeof b === 'object' ? Boolean(b.pressed) : b === 1.0));
       const buttons = compatibilityContext.applyButtonMapping(rawButtons);
       const leftTrigger = typeof gp.buttons[6] === 'object' ? (gp.buttons[6].value ?? (gp.buttons[6].pressed ? 1.0 : 0.0)) : (buttons[6] ? 1.0 : 0.0);
@@ -278,6 +297,11 @@ export function pollGamepads(compatibilityContext, targetIndex = 0) {
           state: currentState
         });
       }
+    } else if (compatibilityContext.lastGamepadState) {
+      sendCoopMessage(compatibilityContext, compatibilityContext.activeDataConn, { type: 'INPUT_GAMEPAD', slot: compatibilityContext.myAssignedSlot ?? 1,
+        state: { buttons: new Array(17).fill(false), triggers: [0, 0], axes: [0, 0, 0, 0] } });
+      compatibilityContext.lastGamepadState = null;
+      inputState(compatibilityContext).gamepadDevice = null;
     }
   } catch (e) {}
 
@@ -296,11 +320,15 @@ export function attachPlayer2InputListeners(compatibilityContext, videoCard) {
     if (typeof wrapper.tabIndex !== 'number' || wrapper.tabIndex < 0) wrapper.tabIndex = 0;
     wrapper.setAttribute?.('aria-label', 'Área de controle do Player 2');
     wrapper.addEventListener('keydown', compatibilityContext.handleKeyDown);
-    wrapper.addEventListener('keyup', compatibilityContext.handleKeyUp);
     wrapper.addEventListener('mousemove', compatibilityContext.handleMouseMove);
     wrapper.addEventListener('mousedown', compatibilityContext.handleMouseDown);
-    wrapper.addEventListener('mouseup', compatibilityContext.handleMouseUp);
     wrapper.addEventListener('pointerdown', compatibilityContext.focusControlWrapper);
+    const state = inputState(compatibilityContext);
+    state.release = () => releaseHeldInputs(compatibilityContext);
+    wrapper.addEventListener('blur', state.release);
+    window.addEventListener('blur', state.release);
+    window.addEventListener('keyup', compatibilityContext.handleKeyUp);
+    window.addEventListener('mouseup', compatibilityContext.handleMouseUp);
   }
 
   compatibilityContext.controlVisibilityTarget = typeof document !== 'undefined' ? document : null;
@@ -313,6 +341,8 @@ export function attachPlayer2InputListeners(compatibilityContext, videoCard) {
 }
 
 export function detachPlayer2InputListeners(compatibilityContext) {
+  const state = inputState(compatibilityContext);
+  releaseHeldInputs(compatibilityContext);
   if (compatibilityContext.attachedCard) {
     const wrapper = compatibilityContext.attachedCard.querySelector?.('.video-wrapper') || compatibilityContext.attachedCard;
     wrapper.removeEventListener?.('keydown', compatibilityContext.handleKeyDown);
@@ -321,11 +351,16 @@ export function detachPlayer2InputListeners(compatibilityContext) {
     wrapper.removeEventListener?.('mousedown', compatibilityContext.handleMouseDown);
     wrapper.removeEventListener?.('mouseup', compatibilityContext.handleMouseUp);
     wrapper.removeEventListener?.('pointerdown', compatibilityContext.focusControlWrapper);
+    wrapper.removeEventListener?.('blur', state.release);
     compatibilityContext.attachedCard = null;
   }
 
   compatibilityContext.controlVisibilityTarget?.removeEventListener?.('visibilitychange', compatibilityContext.handleControlVisibilityChange);
   window.removeEventListener('pagehide', compatibilityContext.handleControlVisibilityChange);
+  window.removeEventListener('blur', state.release);
+  window.removeEventListener('keyup', compatibilityContext.handleKeyUp);
+  window.removeEventListener('mouseup', compatibilityContext.handleMouseUp);
+  state.gamepadDevice = null;
   compatibilityContext.controlVisibilityTarget = null;
 
   compatibilityContext.dispatchHostInputReset();

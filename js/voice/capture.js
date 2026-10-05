@@ -17,8 +17,7 @@ async joinVoice({ peerId, name = 'Você', role = 'host', customStream = null, in
     try {
       if (customStream) {
         this.rawLocalStream = customStream;
-        this.localStream = customStream;
-        this.setupLocalAudioProcessing(customStream);
+        this.localStream = this.setupLocalAudioProcessing(customStream) || customStream;
       } else if (navigator?.mediaDevices?.getUserMedia) {
         const audioConstraints = {
           echoCancellation: true,
@@ -39,6 +38,7 @@ async joinVoice({ peerId, name = 'Você', role = 'host', customStream = null, in
           const processed = this.setupLocalAudioProcessing(userStream);
           this.localStream = processed || userStream;
         } catch (deviceErr) {
+          if (generation !== this.captureGeneration) return null;
           console.warn('[Voice] Microfone preferencial indisponível, usando padrão:', deviceErr);
           if (this.selectedMicId) {
             this.selectedMicId = '';
@@ -59,6 +59,7 @@ async joinVoice({ peerId, name = 'Você', role = 'host', customStream = null, in
               video: false,
             });
           } catch (stdErr) {
+            if (generation !== this.captureGeneration) return null;
             console.warn('[Voice] Captura com cancelamento de ruído falhou, usando captura pura (audio: true):', stdErr);
             userStream = await navigator.mediaDevices.getUserMedia({
               audio: true,
@@ -117,6 +118,7 @@ async joinVoice({ peerId, name = 'Você', role = 'host', customStream = null, in
 
       return this.localStream;
     } catch (err) {
+      if (generation !== this.captureGeneration) return null;
       console.warn('[Voice] Falha ao acessar microfone:', err);
       this.isInVoice = false;
       throw err;

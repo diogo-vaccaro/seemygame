@@ -17,6 +17,9 @@ async setAudioInputDevice(deviceId) {
 
     if (!this.isInVoice) return null;
 
+    const generation = this.captureGeneration = (this.captureGeneration || 0) + 1;
+    const isCurrent = () => this.isInVoice && this.captureGeneration === generation;
+
     try {
       const audioConstraints = {
         echoCancellation: true,
@@ -34,6 +37,7 @@ async setAudioInputDevice(deviceId) {
           video: false,
         });
       } catch (e) {
+        if (!isCurrent()) return null;
         console.warn('[Voice] Microfone falhou, voltando para o padrão:', e);
         if (this.selectedMicId) {
           this.selectedMicId = '';
@@ -53,6 +57,7 @@ async setAudioInputDevice(deviceId) {
             video: false,
           });
         } catch (stdErr) {
+          if (!isCurrent()) return null;
           console.warn('[Voice] Captura com cancelamento de ruído falhou na troca de dispositivo, usando captura pura:', stdErr);
           newStream = await navigator.mediaDevices.getUserMedia({
             audio: true,
@@ -61,26 +66,33 @@ async setAudioInputDevice(deviceId) {
         }
       }
 
-      const newTrack = newStream.getAudioTracks()[0];
-      if (!newTrack) return null;
-      newTrack.enabled = !this.isMuted;
-
-      // Interrompe faixas anteriores
-      if (this.localStream) {
-        this.localStream.getAudioTracks().forEach((t) => {
-          try { t.stop(); } catch (err) {}
-        });
+      if (!isCurrent() || !newStream.getAudioTracks().length) {
+        newStream.getTracks().forEach(track => track.stop());
+        return null;
       }
-
-      this.localStream = newStream;
+      const previousTracks = new Set([
+        ...(this.rawLocalStream?.getTracks() || []),
+        ...(this.localStream?.getTracks() || []),
+        ...(this.processedStream?.getTracks() || [])
+      ]);
+      this.stopLocalVAD();
+      this.teardownLocalAudioProcessing();
+      this.rawLocalStream = newStream;
+      this.localStream = this.setupLocalAudioProcessing(newStream) || newStream;
+      for (const currentStream of new Set([this.rawLocalStream, this.localStream])) {
+        currentStream.getAudioTracks().forEach(track => { track.enabled = !this.isMuted; });
+      }
+      previousTracks.forEach(track => { try { track.stop(); } catch (_) {} });
+      const newTrack = this.localStream.getAudioTracks()[0];
 
       // Reinicializa o analisador VAD local com a nova faixa
       this.initLocalVAD();
 
       // Notifica para atualização dos senders WebRTC nas conexões ativas
-      this.emit('audioInputTrackChange', { newTrack, stream: newStream, deviceId: this.selectedMicId });
-      return newStream;
+      this.emit('audioInputTrackChange', { newTrack, stream: this.localStream, deviceId: this.selectedMicId });
+      return this.localStream;
     } catch (err) {
+      if (!isCurrent()) return null;
       console.warn('[Voice] Falha ao alternar dispositivo de microfone:', err);
       throw err;
     }

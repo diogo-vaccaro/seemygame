@@ -1,7 +1,7 @@
 import { isDesktopApp, getNativeCaptureCapabilities } from '../desktop.js';
 import { getVideoCapabilities, selectCodec } from './codecs.js';
 
-const preferences = { 'video-codec-select': 'seemygame_video_codec', 'h264-encoder-select': 'seemygame_h264_encoder', 'capture-backend-select': 'seemygame_capture_backend' };
+const preferences = { 'video-codec-select': 'seemygame_video_codec', 'h264-encoder-select': 'seemygame_h264_encoder', 'capture-backend-select': 'seemygame_capture_backend', 'capture-method-select': 'seemygame_capture_method' };
 const codecCopy = {
   auto: 'Prefere um formato compatível. O diagnóstico confirma o codec negociado.',
   h264: 'Ampla compatibilidade. O encoder pode ser NVENC, Media Foundation ou CPU no app.',
@@ -16,6 +16,7 @@ export function syncStreamingOptions({ desktop = isDesktopApp(), capabilities = 
   const codec = document.getElementById('video-codec-select');
   const encoder = document.getElementById('h264-encoder-select');
   const api = document.getElementById('capture-backend-select');
+  const method = document.getElementById('capture-method-select');
   if (!codec) return;
   for (const option of codec.options) option.disabled = desktop && ['vp8', 'vp9'].includes(option.value);
   if (codec.selectedOptions[0]?.disabled || !codec.value) codec.value = 'auto';
@@ -53,8 +54,16 @@ export function syncStreamingOptions({ desktop = isDesktopApp(), capabilities = 
     !h264 || !['auto', 'nvenc'].includes(encoder?.value || 'auto') || capabilities?.supports_nvenc_h264 === false || capabilities?.supports_d3d12 === false ? 'Esta combinação usa D3D11. D3D12 está integrado para H.264/NVENC com plugins compatíveis.' :
     'Prefere D3D12 com H.264/NVENC disponível; pode retornar a D3D11 se necessário.';
   setNote('capture-backend-note', apiCopy);
+  if (method) method.disabled = !desktop;
+  setNote('capture-method-note', !desktop
+    ? 'Gerenciado pelo navegador via getDisplayMedia. WGC/DXGI só podem ser escolhidos no app desktop.'
+    : method?.value === 'dxgi'
+      ? 'Somente monitor inteiro: tudo que aparecer nele será compartilhado. Para uma janela, escolha WGC ou Automático. Aplicado ao reiniciar.'
+      : method?.value === 'wgc'
+        ? 'Captura uma janela específica ou um monitor pelo Windows. Aplicado ao reiniciar.'
+        : 'Usa WGC para janelas e monitores. DXGI permanece uma alternativa avançada em validação.');
   // Preserve the selected explanation when the user hovers the actual field.
-  for (const [select, note] of [[codec, 'video-codec-note'], [encoder, 'h264-encoder-note'], [api, 'capture-backend-note']]) if (select) select.title = document.getElementById(note)?.textContent || '';
+  for (const [select, note] of [[codec, 'video-codec-note'], [encoder, 'h264-encoder-note'], [api, 'capture-backend-note'], [method, 'capture-method-note']]) if (select) select.title = document.getElementById(note)?.textContent || '';
 }
 
 export function bindStreamingOptions(session, { desktop = isDesktopApp(), loadCapabilities = getNativeCaptureCapabilities } = {}) {

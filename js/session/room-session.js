@@ -51,12 +51,16 @@ import {
   addOrUpdateVideoCard, 
   removeVideoCard,
   createPlaceholderCard,
-  hideCardLoading
+  hideCardLoading,
+  showCoopPromptModal,
+  updateCoopUI
 } from '../ui.js';
 import { globalBus } from '../core/event-bus.js';
 import { createSessionContext } from '../core/session-context.js';
 import { bindSessionMessageHandlers } from '../protocol/session-handlers.js';
+import { toggleCoopCardControl } from '../coop/card-action.js';
 import { bindRoomIdentity } from './room-identity.js';
+import { bindRoomSettings } from './room-settings.js';
 import { bindRoomVoiceState } from './room-voice-state.js';
 import { registerSessionFeatures } from '../plugins/session-composition.js';
 import { createCoopController } from '../coop/controller.js';
@@ -424,8 +428,10 @@ async function setupRoomSession(peerId, session = roomState.session) {
 }
 
 function attachRoomDataConnection(conn, rm, session, { requestAdmission = false, authenticateMember = false, pin = null } = {}) {
-  if (!conn?.peer || !rm.registerConnection(conn.peer, conn)) return false;
+  if (!conn?.peer || !rm.registerConnection(conn.peer, conn)) { try { conn?.close(); } catch (_) {} return false; }
+  const isCurrent = () => !session?.isDisposed && (rm.meshConnections.get(conn.peer) === conn || rm.pendingConnections.get(conn.peer) === conn);
   conn.on('open', () => {
+    if (!isCurrent()) return;
     if (requestAdmission) {
       sendSessionMessage(roomState.session, conn, {
         type: 'ROOM_JOIN_REQUEST',
@@ -442,6 +448,7 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
     }
   });
   conn.on('data', (message) => {
+    if (!isCurrent()) return;
     const handled = rm.handleRoomMessage(conn.peer, message, conn);
     if (!handled && rm.isPeerAuthorized(conn.peer)) {
       if (message?.type === 'REQUEST_STREAM') {
@@ -454,6 +461,7 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
     }
   });
   conn.on('close', () => {
+    if (!isCurrent()) return;
     const isMasterConn = roomState.coordinatorConn === conn;
     if (isMasterConn) {
       roomState.coordinatorConn = null;
@@ -486,12 +494,18 @@ function handleRoomMediaCall(call, rm, session) {
     };
   }
   call.answer();
+  const previousCall = roomState.remoteStreams.get(call.peer)?.call;
+  roomState.remoteStreams.set(call.peer, { call, stream: null });
+  try { previousCall?.close(); } catch (_) {}
   call.on('stream', (stream) => {
+    if (session?.isDisposed || !rm.isPeerAuthorized(call.peer) || roomState.remoteStreams.get(call.peer)?.call !== call) return;
     roomState.remoteStreams.set(call.peer, { call, stream });
     startStatsMonitor(call.peer, call.peerConnection, false);
     const member = rm.members.get(call.peer);
     hideCardLoading(call.peer);
-    addOrUpdateVideoCard({ audioScope: roomState.session?.audioScope, peerId: call.peer, stream, label: member?.name || `Amigo ${call.peer.slice(-4)}`, isLocal: false, onClipClick: sourceId => roomState.features?.clipEditor?.exportClip(sourceId) });
+    addOrUpdateVideoCard({ session, audioScope: roomState.session?.audioScope, peerId: call.peer, stream, label: member?.name || `Amigo ${call.peer.slice(-4)}`, isLocal: false,
+      onClipClick: sourceId => roomState.features?.clipEditor?.exportClip(sourceId),
+      onCoopClick: peerId => toggleCoopCardControl(coopController, peerId, rm.meshConnections.get(peerId)) });
     session?.eventBus.emit('stream:received', { hostId: call.peer, stream });
   });
   call.on('close', () => {
@@ -523,9 +537,11 @@ function sendRoomStream(memberId, conn, rm, session) {
   const release = () => {
     stopTuning();
     quality.dispose();
-    stopStatsMonitor(`send-${memberId}`);
     unregisterCleanup?.();
-    if (roomState.screenCalls.get(memberId) === call) roomState.screenCalls.delete(memberId);
+    if (roomState.screenCalls.get(memberId) === call) {
+      stopStatsMonitor(`send-${memberId}`);
+      roomState.screenCalls.delete(memberId);
+    }
   };
   unregisterCleanup = session?.registerCleanup(() => { release(); try { call.close(); } catch (_) {} });
   call.on('close', release);
@@ -536,12 +552,12 @@ async function joinRoomVoice(rm, session) {
   if (voiceManager.isInVoice) return;
   try {
     const stream = await voiceManager.joinVoice({ peerId: rm.myPeerId, name: rm.userName, role: rm.isMaster ? 'host' : 'member' });
+    if (session?.isDisposed || !stream || !voiceManager.isInVoice) return;
     rm.broadcast({ type: 'VOICE_SIGNAL', action: 'VOICE_JOINED', peerId: rm.myPeerId, name: rm.userName, role: rm.isMaster ? 'host' : 'member' });
     for (const [memberId, conn] of rm.meshConnections) {
-      if (!conn.open || !rm.isPeerAuthorized(memberId) || rm.myPeerId.localeCompare(memberId) >= 0) continue;
+      if (!conn.open || !rm.isPeerAuthorized(memberId)) continue;
       const handlers = session?.messageHandlers || roomState.messageHandlers;
-      const call = roomState.peer?.call(memberId, stream, { metadata: { type: 'VOICE_CHAT', name: rm.userName, role: rm.isMaster ? 'host' : 'member' } });
-      handlers?.bindVoiceCall(call);
+      handlers?.connectVoiceTo(memberId);
     }
   } catch (error) {
     showToast('Não foi possível acessar o microfone.', 'error');
@@ -585,7 +601,7 @@ async function startRoomCapture(rm, session, captureOptions = {}) {
     roomState.localStream = stream;
     roomState.captureSettings = { ...readCaptureSettings(), ...captureOptions };
     stream.getVideoTracks().forEach((track) => track.addEventListener('ended', () => stopRoomCapture(rm, session), { once: true }));
-    addOrUpdateVideoCard({ audioScope: roomState.session?.audioScope, peerId: 'local-me', stream, label: `${rm.userName} (Ao Vivo)`, isLocal: true });
+    addOrUpdateVideoCard({ session, audioScope: roomState.session?.audioScope, peerId: 'local-me', stream, label: `${rm.userName} (Ao Vivo)`, isLocal: true, onClipClick: sourceId => roomState.features?.clipEditor?.exportClip(sourceId) });
     roomState.discordUI?.setStreamingState(true);
     rm.setLocalStreaming(true, { sourceType: 'display', title: 'Compartilhamento de tela' });
     for (const [memberId, conn] of rm.meshConnections) {
@@ -803,12 +819,32 @@ async function initRoomApp(options = {}) {
   session.getPeerId = () => roomState.peer?.id;
   roomState.identityUI = bindRoomIdentity(session, {
     getRoomInfo: () => ({ ...getRoomInfoFromUrl(), roomId: roomState.roomManager?.roomId || getRoomInfoFromUrl().roomId,
-      roomPin: roomState.roomManager?.roomPin || roomState.currentPin, roomKey: roomState.roomManager?.roomKey || getRoomInfoFromUrl().roomKey }),
+      roomPin: roomState.roomManager ? roomState.roomManager.roomPin : roomState.currentPin, roomKey: roomState.roomManager?.roomKey || getRoomInfoFromUrl().roomKey }),
     showToast
   });
   session.registerCleanup(() => { roomState.identityUI = null; });
+  bindRoomSettings(session, {
+    getRoomManager: () => roomState.roomManager,
+    showToast,
+    applySettings: ({ roomId, roomPin, url }) => {
+      const rm = roomState.roomManager;
+      if (!rm?.isMaster) return;
+      if (roomId !== rm.roomId) {
+        window.history.replaceState(null, '', url);
+        window.location.reload();
+        return;
+      }
+      rm.setRoomPin(roomPin);
+      roomState.currentPin = roomPin;
+      window.history.replaceState(null, '', url);
+      roomState.identityUI?.update('ready');
+      showToast('Ajustes da sala atualizados. O convite já usa o novo PIN.', 'success');
+    }
+  });
   audioScope = session.audioScope;
   session.services = { chatManager, voiceManager, coopController, statsScope };
+  session.registerCleanup(coopController.registerCoopPromptHandler(prompt => showCoopPromptModal(prompt)));
+  session.registerCleanup(coopController.registerCoopStateChangeHandler(state => updateCoopUI(state)));
   bindQualityCapabilities(session);
   bindCaptureSettings(session, () => roomState.captureProvider, showToast);
   bindStreamingQuality(session, { getStream: () => roomState.localStream, getProvider: () => roomState.captureProvider, getCalls: () => roomState.screenCalls.values(), onSettings: settings => { roomState.captureSettings = settings; }, showToast });
@@ -839,11 +875,13 @@ async function initRoomApp(options = {}) {
     role: 'room',
     chatManager,
     voiceManager,
+    getVideoCard: peerId => document.getElementById(`card-${peerId}`),
     getChatIdentity: id => {
       const member = roomState.roomManager?.members.get(id);
       return member ? { name: member.name, role: member.isMaster ? 'host' : 'viewer' } : null;
     },
     getPeer: () => roomState.peer,
+    isAuthorizedPeer: id => roomState.roomManager?.isPeerAuthorized(id),
     getLocalPeerId: () => roomState.peer?.id,
     showToast,
     broadcast: (data, excludePeerId) => roomState.roomManager?.broadcast(data, excludePeerId)

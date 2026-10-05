@@ -3,6 +3,7 @@ import { EMOJI_REACTION_PRESETS } from './shared.js';
 /** DiscordUIController: voice. State and lifetime remain owned by the composed engine. */
 export const withDiscordUIControllerVoice = Base => class extends Base {
 bindVoiceEvents() {
+    this._cleanupFns.push(() => this._voiceRenderController?.abort());
     this.observe(this.voiceManager, 'participantUpdate', (participants) => {
       this.renderVoiceParticipants(participants);
     });
@@ -34,6 +35,9 @@ bindVoiceEvents() {
   }
 
 renderVoiceParticipants(participants) {
+    this._voiceRenderController?.abort();
+    this._voiceRenderController = new AbortController();
+    const listenerOptions = { signal: this._voiceRenderController.signal };
     const list = this.elements.voiceParticipants;
     const badges = [this.elements.voiceBadge, this.elements.railVoiceBadge];
 
@@ -148,7 +152,7 @@ renderVoiceParticipants(participants) {
         valSpan.className = 'voice-user-volume-val';
         valSpan.textContent = `${userVol}%`;
 
-        this.listen(muteBtn, 'click', (e) => {
+        muteBtn.addEventListener('click', (e) => {
           e.stopPropagation();
           const currentMute = this.voiceManager.isUserLocallyMuted(p.peerId);
           const nextMute = !currentMute;
@@ -156,9 +160,10 @@ renderVoiceParticipants(participants) {
           muteBtn.textContent = nextMute ? '🔇' : '🔊';
           muteBtn.classList.toggle('muted', nextMute);
           muteBtn.title = nextMute ? 'Desmutar este amigo para você' : 'Mutar este amigo só para você';
-        });
+          muteBtn.setAttribute('aria-label', muteBtn.title);
+        }, listenerOptions);
 
-        this.listen(slider, 'input', (e) => {
+        slider.addEventListener('input', (e) => {
           e.stopPropagation();
           const newVol = parseInt(e.target.value, 10) || 0;
           this.voiceManager.setUserVolume(p.peerId, newVol);
@@ -169,7 +174,7 @@ renderVoiceParticipants(participants) {
           } else if (!this.voiceManager.isUserLocallyMuted(p.peerId)) {
             muteBtn.textContent = '🔊';
           }
-        });
+        }, listenerOptions);
 
         volRow.appendChild(muteBtn);
         volRow.appendChild(slider);

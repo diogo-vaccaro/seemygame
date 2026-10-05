@@ -24,6 +24,8 @@
     "check:css": "node tools/split-css.mjs",
     "test:e2e:sessions": "node tests/e2e-sessions.mjs",
     "test:e2e:room-controls": "node tests/e2e-room-controls.mjs",
+    "test:e2e:room-findings": "node tests/e2e-room-findings.mjs",
+    "test:e2e:audit-fixes": "node tests/e2e-audit-fixes.mjs",
     "test:e2e:historical": "node tools/e2e/historical-suite.mjs",
     "test:e2e:replay": "node tools/e2e/replay-matrix.mjs",
     "test:e2e:controllers": "node tests/e2e-controller-lab.mjs",

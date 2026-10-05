@@ -2,6 +2,10 @@
 import { WHITEBOARD_TOOLS, WHITEBOARD_COLORS, CURSOR_PALETTE, getPeerCursorColor, isTooBrightOrWhite, getContrastTextColor, drawRoundedRect, getFillAlpha, MAX_WHITEBOARD_ELEMENTS, MAX_WHITEBOARD_POINTS, MAX_WHITEBOARD_TEXT_LENGTH, WHITEBOARD_REF_WIDTH, WHITEBOARD_REF_HEIGHT, WHITEBOARD_ELEMENT_TYPES, isFiniteNumber, isSafeWhiteboardElement, processImageFile } from './shared.js';
 /** WhiteboardManager: renderer. State and lifetime remain owned by the composed engine. */
 export const withWhiteboardManagerRenderer = Base => class extends Base {
+pruneImageCache() {
+    const used = new Set(this.elements.filter(element => element.type === 'image').map(element => element.dataUrl));
+    for (const [url, image] of this.imageCache) if (!used.has(url)) { image.onload = null; this.imageCache.delete(url); }
+  }
 render() {
     if (!this.ctx || !this.canvas) return;
 
@@ -328,7 +332,7 @@ renderImage(ctx, el) {
       img = new Image();
       img.src = el.dataUrl;
       img.onload = () => {
-        this.render();
+        if (this.imageCache.get(el.dataUrl) === img) this.render();
       };
       this.imageCache.set(el.dataUrl, img);
     }

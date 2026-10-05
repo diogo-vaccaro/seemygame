@@ -66,7 +66,7 @@ export async function grantCoopPlayer(compatibilityContext, senderPeerId, conn, 
       return false;
     }
     if (!isStillValid()) {
-      compatibilityContext.unplugVirtualGamepad(finalSlot).catch(() => {});
+      if (!compatibilityContext.coopSlots.has(finalSlot)) compatibilityContext.unplugVirtualGamepad(finalSlot).catch(() => {});
       return false;
     }
     return sendApproval(true);
@@ -155,14 +155,16 @@ export function handleHostCoopMessage(compatibilityContext, senderPeerId, data, 
 
     if (isSlotAllowed && assignedPlayer && assignedPlayer.peerId === senderPeerId) {
       if (data.type === 'INPUT_KEY') {
+        if (slot !== 1) return;
         compatibilityContext.dispatchHostKeyboardInput(data, slot);
       } else if (data.type === 'INPUT_MOUSE') {
+        if (slot !== 1 || !compatibilityContext.isCompanionConnected || !compatibilityContext.companionCapabilities?.mouse) return;
         compatibilityContext.dispatchHostMouseInput(data);
       } else if (data.type === 'INPUT_GAMEPAD') {
         compatibilityContext.dispatchHostGamepadInput(data);
       } else if (data.type === 'INPUT_RESET') {
         if (data.preserveGamepads === true) compatibilityContext.dispatchHostInputReset({ unplugVirtualGamepads: false, slot });
-        else compatibilityContext.dispatchHostInputReset();
+        else compatibilityContext.dispatchHostInputReset({ slot });
       }
     }
   }

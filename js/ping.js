@@ -86,7 +86,7 @@ export class TacticalPingManager {
    * Adiciona um novo ping tático na tela
    * @param {Object} param
    */
-  addPing({ x, y, type = 'ping', color = null, senderName = 'Amigo', duration = 2000 }) {
+  addPing({ x, y, sourceId, type = 'ping', color = null, senderName = 'Amigo', duration = 2000 }) {
     if ((!this.canvas || !this.canvas.isConnected) && typeof document !== 'undefined') {
       const canvasEl = document.getElementById('ping-canvas');
       if (canvasEl) this.setCanvas(canvasEl);
@@ -104,6 +104,7 @@ export class TacticalPingManager {
       id: Math.random().toString(36).substring(2, 9),
       x: clampedX,
       y: clampedY,
+      ...(typeof sourceId === 'string' && sourceId.length > 0 && sourceId.length <= 128 ? { sourceId } : {}),
       type: safeType,
       color: safeColor || defaultColor,
       senderName: safeSenderName,
@@ -120,7 +121,7 @@ export class TacticalPingManager {
   /**
    * Inicia um traçado de laser pointer
    */
-  startLaserTrail({ senderId = 'local', color = '#10b981' } = {}) {
+  startLaserTrail({ senderId = 'local', sourceId, color = '#10b981' } = {}) {
     if ((!this.canvas || !this.canvas.isConnected) && typeof document !== 'undefined') {
       const canvasEl = document.getElementById('ping-canvas');
       if (canvasEl) this.setCanvas(canvasEl);
@@ -138,6 +139,7 @@ export class TacticalPingManager {
     }
     const trail = {
       senderId: safeSender,
+      sourceId,
       points: [],
       color: safeColor,
       maxAge: 2200
@@ -153,15 +155,16 @@ export class TacticalPingManager {
   /**
    * Adiciona um ponto ao traço de laser ativo de um remetente
    */
-  addLaserPoint({ senderId = 'local', x, y, color = '#10b981' }) {
+  addLaserPoint({ senderId = 'local', sourceId, x, y, color = '#10b981' }) {
+    sourceId = typeof sourceId === 'string' && sourceId.length > 0 && sourceId.length <= 128 ? sourceId : undefined;
     const clampedX = Math.max(0, Math.min(1, Number(x) || 0));
     const clampedY = Math.max(0, Math.min(1, Number(y) || 0));
     const safeSender = String(senderId || 'local');
     const safeColor = typeof color === 'string' && /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#10b981';
 
     let trail = this.activeLaserTrails.get(safeSender);
-    if (!trail) {
-      trail = this.startLaserTrail({ senderId: safeSender, color: safeColor });
+    if (!trail || trail.sourceId !== sourceId) {
+      trail = this.startLaserTrail({ senderId: safeSender, sourceId, color: safeColor });
     }
 
     if (trail.points.length >= this.maxLaserPoints) trail.points.shift();
@@ -169,6 +172,7 @@ export class TacticalPingManager {
     trail.points.push({
       x: clampedX,
       y: clampedY,
+      ...(sourceId ? { sourceId } : {}),
       time: Date.now()
     });
   }
@@ -185,6 +189,16 @@ export class TacticalPingManager {
   /**
    * Renderiza os pings e lasers no canvas em cada frame
    */
+  projectPoint(point) {
+    const width = this.canvas?.width || 0, height = this.canvas?.height || 0;
+    if (!point.sourceId) return { x: point.x * width, y: point.y * height };
+    const source = this.sourceRectProvider?.(point.sourceId);
+    if (!source?.width || !source?.height || !this.canvas) return null;
+    const canvas = this.canvas.getBoundingClientRect();
+    return { x: (source.left + point.x * source.width - canvas.left) * width / (canvas.width || width),
+      y: (source.top + point.y * source.height - canvas.top) * height / (canvas.height || height) };
+  }
+
   render() {
     if (!this.ctx || !this.canvas) return;
 
@@ -201,8 +215,10 @@ export class TacticalPingManager {
 
       const progress = elapsed / ping.duration; // 0.0 -> 1.0
       const alpha = Math.max(0, 1 - progress);
-      const px = ping.x * width;
-      const py = ping.y * height;
+      const position = this.projectPoint(ping);
+      if (!position) return true;
+      const px = position.x;
+      const py = position.y;
 
       this.ctx.save();
 
@@ -245,6 +261,8 @@ export class TacticalPingManager {
       trail.points = trail.points.filter(p => now - p.time < trail.maxAge);
       const active = this.activeLaserTrails.get(trail.senderId) === trail;
       if (trail.points.length === 0) return active;
+      const tipPosition = this.projectPoint(trail.points[trail.points.length - 1]);
+      if (!tipPosition) return true;
 
       this.ctx.save();
       this.ctx.lineCap = 'round';
@@ -253,7 +271,7 @@ export class TacticalPingManager {
       // A stationary pointer (or the first point) must be visible too.
       const tip = trail.points[trail.points.length - 1];
       this.ctx.beginPath();
-      this.ctx.arc(tip.x * width, tip.y * height, 3, 0, Math.PI * 2);
+      this.ctx.arc(tipPosition.x, tipPosition.y, 3, 0, Math.PI * 2);
       this.ctx.fillStyle = trail.color;
       this.ctx.globalAlpha = Math.max(0, 1 - (now - tip.time) / trail.maxAge);
       this.ctx.shadowColor = trail.color;
@@ -265,10 +283,12 @@ export class TacticalPingManager {
         const p2 = trail.points[i];
         const age = now - p2.time;
         const alpha = Math.max(0, 1 - (age / trail.maxAge));
+        const position1 = this.projectPoint(p1), position2 = this.projectPoint(p2);
+        if (!position1 || !position2) continue;
 
         this.ctx.beginPath();
-        this.ctx.moveTo(p1.x * width, p1.y * height);
-        this.ctx.lineTo(p2.x * width, p2.y * height);
+        this.ctx.moveTo(position1.x, position1.y);
+        this.ctx.lineTo(position2.x, position2.y);
         this.ctx.strokeStyle = trail.color;
         this.ctx.globalAlpha = alpha;
         this.ctx.lineWidth = 4;

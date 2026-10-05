@@ -200,7 +200,10 @@ function handleViewerConnection(conn, session = streamerState.session) {
   const viewerId = conn.peer;
 
   conn.on('open', () => {
+    if (session?.isDisposed) { conn.close(); return; }
+    const previous = streamerState.connectedViewers.get(viewerId);
     streamerState.connectedViewers.set(viewerId, conn);
+    try { if (previous !== conn) previous?.close(); } catch (_) {}
     console.log(`[Streamer] Espectador conectado: ${viewerId}`);
 
     getStreamerPin();
@@ -224,6 +227,7 @@ function handleViewerConnection(conn, session = streamerState.session) {
   });
 
   conn.on('data', (data) => {
+    if (session?.isDisposed || streamerState.connectedViewers.get(viewerId) !== conn) return;
     if (!data || typeof data !== 'object') return;
 
     if (data.type === PROTOCOL_TYPES.MEDIA.REQUEST_STREAM || data.type === PROTOCOL_TYPES.ADMISSION.VIEWER_HELLO) {
@@ -288,6 +292,7 @@ function handleViewerConnection(conn, session = streamerState.session) {
   });
 
   conn.on('close', () => {
+    if (streamerState.connectedViewers.get(viewerId) !== conn) return;
     streamerState.connectedViewers.delete(viewerId);
     streamerState.admissionGate.revoke(viewerId);
     session?.eventBus.emit('streamer:viewerDisconnected', { peerId: viewerId });
@@ -344,7 +349,13 @@ function callViewerWithStream(viewerId, session = streamerState.session) {
   const stopTuning = applySenderOptimizationsWhenReady(call.peerConnection, () => streamerState.targetBitrateBps, () => streamerState.fpsTarget);
   const quality = createQualityController(call.peerConnection, () => ({ ...readCaptureSettings(), bitrateKbps: streamerState.targetBitrateBps / 1000, fps: streamerState.fpsTarget }));
   startStatsMonitor(`send-${viewerId}`, call.peerConnection, true, sample => quality.process(sample), { cardId: 'local-me', context: () => ({ requestedFps: streamerState.fpsTarget, requestedCodec: readCaptureSettings().videoCodec }) });
-  const release = () => { stopTuning(); quality.dispose(); stopStatsMonitor(`send-${viewerId}`); if (streamerState.activeCalls.get(viewerId) === call) streamerState.activeCalls.delete(viewerId); };
+  const release = () => {
+    stopTuning(); quality.dispose();
+    if (streamerState.activeCalls.get(viewerId) === call) {
+      stopStatsMonitor(`send-${viewerId}`);
+      streamerState.activeCalls.delete(viewerId);
+    }
+  };
   call.on('close', release); call.on('error', release);
   session?.registerCleanup(release);
 
@@ -401,11 +412,12 @@ async function startCapture(sourceId = null, captureOptions = {}, session = stre
       }
     }
 
-    addOrUpdateVideoCard({ audioScope: streamerState.session?.audioScope,
+    addOrUpdateVideoCard({ session, audioScope: streamerState.session?.audioScope,
       peerId: 'local-me',
       stream,
       label: 'Sua Transmissão (Ao Vivo)',
-      isLocal: true
+      isLocal: true,
+      onClipClick: sourceId => streamerState.features?.clipEditor?.exportClip(sourceId)
     });
 
     const streamBtn = document.getElementById('stream-btn');
@@ -550,6 +562,7 @@ async function initStreamerApp(options = {}) {
     role: 'streamer',
     chatManager,
     voiceManager,
+    isAuthorizedPeer: id => streamerState.admissionGate.isAuthenticated(id),
     getChatIdentity: id => {
       const slot = getCoopState().slots?.find(player => player.occupied && player.peerId === id);
       return { name: slot?.name || `Amigo ${id.slice(-4)}`, role: slot ? 'player2' : 'viewer' };
@@ -644,14 +657,14 @@ async function initStreamerApp(options = {}) {
       onJoinVoice: async () => {
         try {
           const stream = await voiceManager.joinVoice({ peerId: streamerState.streamerId, name: 'Streamer', role: 'host' });
+          if (!stream || !voiceManager.isInVoice || session.isDisposed) return;
           const payload = { type: 'VOICE_SIGNAL', action: 'HOST_VOICE_ACTIVE', peerId: streamerState.streamerId, name: 'Streamer', role: 'host' };
           streamerState.connectedViewers.forEach((conn, peerId) => {
             if (conn.open && streamerState.admissionGate.isAuthenticated(peerId)) sendSessionMessage(streamerState.session, conn, payload);
           });
           for (const peerId of streamerState.connectedViewers.keys()) {
             if (!streamerState.admissionGate.isAuthenticated(peerId)) continue;
-            const call = streamerState.peer?.call(peerId, stream, { metadata: { type: 'VOICE_CHAT', name: 'Streamer', role: 'host' } });
-            messageHandlers.bindVoiceCall(call);
+            messageHandlers.connectVoiceTo(peerId);
           }
         } catch (_) { showToast('Não foi possível acessar o microfone.', 'error'); }
       },

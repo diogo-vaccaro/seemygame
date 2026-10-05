@@ -54,6 +54,7 @@ export async function startLocalStream(compatibilityContext, options = {}) {
         videoCodec: chosenCodec,
         h264Encoder: chosenEncoder,
         captureBackend: document.getElementById('capture-backend-select')?.value || options.captureBackend || null,
+        captureApi: document.getElementById('capture-method-select')?.value || options.captureApi || null,
         showCursor: chosenCursor,
         width: compatibilityContext.selectedProfile.width,
         height: compatibilityContext.selectedProfile.height,
@@ -346,6 +347,7 @@ export async function initDesktopSupport(compatibilityContext) {
   const pickerRefreshBtn = document.getElementById('picker-refresh-btn');
   const pickerCancelBtn = document.getElementById('picker-cancel-btn');
   const pickerScreenFallbackBtn = document.getElementById('picker-screen-fallback-btn');
+  const captureMethod = document.getElementById('capture-method-select');
 
   async function refreshWindowsList() {
     if (!desktopWindowsList) return;
@@ -357,7 +359,9 @@ export async function initDesktopSupport(compatibilityContext) {
     try {
       const caps = await compatibilityContext.getNativeCaptureCapabilities();
       if (caps && (caps.available || caps.provider === 'native') && pickerNativeStatus) {
-        pickerNativeStatus.innerHTML = 'Captura Nativa Ativa: Windows Graphics Capture';
+        pickerNativeStatus.textContent = captureMethod?.value === 'dxgi'
+          ? 'Método selecionado: DXGI — compartilha tudo que aparecer no monitor inteiro.'
+          : 'Captura Nativa Ativa: Windows Graphics Capture';
       }
     } catch (e) {}
 
@@ -424,7 +428,13 @@ export async function initDesktopSupport(compatibilityContext) {
           </div>
           <button class="window-action-btn">Transmitir</button>
         `;
+        item.querySelector('button').disabled = captureMethod?.value === 'dxgi';
+        if (captureMethod?.value === 'dxgi') item.title = 'Escolha WGC ou Automático para compartilhar somente esta janela.';
         item.addEventListener('click', () => {
+          if (captureMethod?.value === 'dxgi') {
+            compatibilityContext.showToast('DXGI captura somente um monitor inteiro. Escolha WGC ou Automático para compartilhar uma janela.', 'info');
+            return;
+          }
           if (desktopPickerModal) desktopPickerModal.style.display = 'none';
           compatibilityContext.startLocalStream({ sourceId: win.sourceId || win.id, sourceType: 'window', excludeApp: compatibilityContext.getSelectedAudioExclusionApp() });
         });

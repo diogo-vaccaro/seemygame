@@ -57,7 +57,7 @@ export function handleViewerCoopMessage(compatibilityContext, data, hostPeerId, 
         coopBtn.disabled = true;
         coopBtn.classList.add('btn-disabled');
         coopBtn.title = 'O streamer desativou o modo Co-op nesta sessão';
-        if (compatibilityContext.isPlayer2) {
+        if (compatibilityContext.isPlayer2 && compatibilityContext.activeHostPeerId === hostPeerId) {
           compatibilityContext.releaseCoopControl(false);
           compatibilityContext.showToast('🔒 O streamer desativou o modo Co-op.', 'info');
         }

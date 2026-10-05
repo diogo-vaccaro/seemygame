@@ -13,6 +13,7 @@ import { bindClipEditor } from '../clipping/editor-controller.js';
 import { NativeMediaPlugin } from './native-media-plugin.js';
 import { nativeReplayContext } from '../clipping/native-context.js';
 import { bindControllerLab } from '../controller-lab/index.js';
+import { toggleCoopCardControl } from '../coop/card-action.js';
 
 export function registerSessionFeatures(session, {
   role,
@@ -38,7 +39,8 @@ export function registerSessionFeatures(session, {
     getNativeContext: sourceId => nativeReplayContext(sourceId, getCaptureProvider())
   }) }));
   plugins.push(new NativeMediaPlugin({ session, getProvider: getCaptureProvider, isAuthorized: isAuthorizedPeer,
-    onClip: sourceId => session.state.features?.clipEditor?.exportClip(sourceId)
+    onClip: sourceId => session.state.features?.clipEditor?.exportClip(sourceId),
+    onCoop: peerId => toggleCoopCardControl(session.services?.coopController, peerId, [...getConnections()].find(conn => conn.peer === peerId))
   }));
   for (const plugin of plugins) session.pluginManager.register(plugin);
 

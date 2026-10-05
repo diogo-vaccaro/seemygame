@@ -52,19 +52,43 @@ export function bindSessionMessageHandlers(session, {
   }, 'Session chat receive and relay');
 
   register('VOICE_STATE_UPDATE', (data, sourceConn) => {
-    voiceManager?.updateParticipantState(data.peerId || sourceConn?.peer, {
+    const transportPeerId = sourceConn?.peer;
+    const trustedRelay = role === 'viewer' && isTrustedChatRelayPeer(transportPeerId) && data.relayedBy === transportPeerId;
+    const peerId = data.peerId || transportPeerId;
+    if (session.isDisposed || !transportPeerId || !isAuthorizedPeer(transportPeerId) ||
+        (!trustedRelay && peerId !== transportPeerId)) return;
+    voiceManager?.updateParticipantState(peerId, {
       isSpeaking: data.isSpeaking,
       isMuted: data.isMuted,
       isDeafened: data.isDeafened
     });
     session.eventBus.emit('voice:state-updated', data);
-    relay(data, sourceConn);
+    if (role === 'streamer') relay({ ...data, peerId, relayedBy: getLocalPeerId() }, sourceConn);
   }, 'Session voice state receive and relay');
 
   const activeVoiceCalls = new Map();
+  const replaceVoiceTrack = ({ newTrack }) => {
+    if (session.isDisposed || !voiceManager?.isInVoice || !newTrack) return;
+    for (const call of activeVoiceCalls.values()) {
+      for (const sender of call.peerConnection?.getSenders?.() || []) {
+        if (sender.track?.kind !== 'audio') continue;
+        Promise.resolve().then(() => {
+          if (session.isDisposed || activeVoiceCalls.get(call.peer) !== call || !voiceManager.isInVoice) return;
+          return sender.replaceTrack(newTrack);
+        }).catch(error => {
+          session.eventBus.emit('system:error', { sourceEvent: 'voice:replace-track', error });
+          if (activeVoiceCalls.get(call.peer) === call) removeVoicePeer(call.peer);
+        });
+      }
+    }
+  };
+  voiceManager?.on?.('audioInputTrackChange', replaceVoiceTrack);
+  session.registerCleanup(() => voiceManager?.off?.('audioInputTrackChange', replaceVoiceTrack));
+  const voicePeers = new Set();
   const connectVoiceTo = (peerId) => {
     const localPeerId = getLocalPeerId();
     if (!peerId || !localPeerId || localPeerId.localeCompare(peerId) >= 0) return null;
+    if (session.isDisposed || !voicePeers.has(peerId) || !isAuthorizedPeer(peerId)) return null;
     if (!voiceManager?.isInVoice || !voiceManager.localStream || activeVoiceCalls.has(peerId)) return null;
     const peer = getPeer();
     if (!peer || peer.destroyed) return null;
@@ -85,6 +109,7 @@ export function bindSessionMessageHandlers(session, {
     const peerId = call.peer;
     activeVoiceCalls.set(peerId, call);
     call.on('stream', (stream) => {
+      if (session.isDisposed || activeVoiceCalls.get(peerId) !== call || !voiceManager.isInVoice) return;
       voiceManager.addRemoteParticipant(peerId, {
         name: call.metadata?.name || 'Jogador',
         role: call.metadata?.role || 'member',
@@ -92,8 +117,9 @@ export function bindSessionMessageHandlers(session, {
       });
     });
     const cleanup = () => {
+      if (activeVoiceCalls.get(peerId) !== call) return;
       voiceManager.removeRemoteParticipant(peerId);
-      if (activeVoiceCalls.get(peerId) === call) activeVoiceCalls.delete(peerId);
+      activeVoiceCalls.delete(peerId);
     };
     call.on('close', cleanup);
     call.on('error', cleanup);
@@ -101,14 +127,17 @@ export function bindSessionMessageHandlers(session, {
   session.registerCleanup(() => {
     for (const peerId of activeVoiceCalls.keys()) removeVoicePeer(peerId);
     activeVoiceCalls.clear();
+    voicePeers.clear();
   });
 
   register('VOICE_SIGNAL', (data, sourceConn) => {
     const peerId = data.peerId || sourceConn?.peer;
     if (!peerId || (sourceConn?.peer && peerId !== sourceConn.peer)) return;
     if (data.action === 'LEAVE') {
+      voicePeers.delete(peerId);
       removeVoicePeer(peerId);
     } else if (data.action === 'HOST_VOICE_ACTIVE' || data.action === 'VOICE_JOINED') {
+      voicePeers.add(peerId);
       if (peerId !== getLocalPeerId()) connectVoiceTo(peerId);
       showToast(data.action === 'HOST_VOICE_ACTIVE'
         ? 'O Streamer está na sala de voz!'
@@ -121,16 +150,19 @@ export function bindSessionMessageHandlers(session, {
   const coopTypes = [
     'COOP_REQUEST', 'COOP_RESPONSE', 'COOP_CAPABILITIES', 'COOP_CONFIG',
     'COOP_SLOTS_UPDATE', 'COOP_RELEASE', 'COOP_REVOKE', 'COOP_INPUT',
-    'COOP_PEER_DISCONNECTED', 'COOP_TARGET'
+    'COOP_PEER_DISCONNECTED', 'COOP_TARGET', 'GAMEPAD_RUMBLE'
   ];
+  const playerCommands = new Set(['COOP_RESPONSE', 'COOP_CAPABILITIES', 'COOP_CONFIG', 'COOP_SLOTS_UPDATE', 'COOP_REVOKE', 'GAMEPAD_RUMBLE']);
   for (const type of coopTypes) {
     register(type, (data, sourceConn) => {
-      if (role === 'streamer' || role === 'room') {
-        if (sourceConn?.peer) (coopController?.handleHostCoopMessage || handleHostCoopMessage)(sourceConn.peer, data, sourceConn);
-      } else if (sourceConn?.peer) {
+      if (session.isDisposed || !sourceConn?.peer || !isAuthorizedPeer(sourceConn.peer)) return;
+      if (role === 'room' && playerCommands.has(type) || role === 'viewer') {
+        const selectedHost = coopController?.getCoopState?.().activeHostPeerId;
+        if (type !== 'COOP_CONFIG' && type !== 'COOP_SLOTS_UPDATE' && selectedHost && selectedHost !== sourceConn.peer) return;
         (coopController?.handleViewerCoopMessage || handleViewerCoopMessage)(data, sourceConn.peer, getVideoCard(sourceConn.peer), sourceConn);
+      } else if (role === 'streamer' || role === 'room') {
+        if (sourceConn?.peer) (coopController?.handleHostCoopMessage || handleHostCoopMessage)(sourceConn.peer, data, sourceConn);
       }
-      relay(data, sourceConn);
     }, `Session Co-op: ${type}`);
   }
 
@@ -159,7 +191,11 @@ export function bindSessionMessageHandlers(session, {
         return false;
       }
       const stream = voiceManager.isInVoice ? voiceManager.localStream : null;
-      call.answer(stream || undefined);
+      if (!stream || session.isDisposed) {
+        try { call.close(); } catch (_) {}
+        return false;
+      }
+      call.answer(stream);
       bindVoiceCall(call);
       return true;
     },

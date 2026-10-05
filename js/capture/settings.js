@@ -13,6 +13,7 @@ export function readCaptureSettings(root = document) {
     videoCodec: value('video-codec-select') || null,
     h264Encoder: value('h264-encoder-select') || null,
     captureBackend: value('capture-backend-select') || null,
+    captureApi: value('capture-method-select') || null,
     showCursor: root.getElementById('capture-cursor-toggle')?.checked !== false,
     excludeApp: value('picker-audio-exclude-select') || value('audio-exclude-select') || null
   };
@@ -23,18 +24,20 @@ export function bindCaptureSettings(session, getProvider, showToast) {
   if (session.captureSettingsBound) return;
   session.captureSettingsBound = true;
   let pending = Promise.resolve();
-  for (const id of ['quality-preset', 'bitrate-slider', 'audio-mode-select', 'video-codec-select', 'h264-encoder-select', 'capture-backend-select', 'capture-cursor-toggle', 'audio-exclude-select']) {
+  for (const id of ['quality-preset', 'bitrate-slider', 'audio-mode-select', 'video-codec-select', 'h264-encoder-select', 'capture-backend-select', 'capture-method-select', 'capture-cursor-toggle', 'audio-exclude-select']) {
     session.addEventListener(document.getElementById(id), 'change', () => {
       const provider = getProvider();
       if (!provider?.session) return;
       if (id === 'video-codec-select') return;
       if (id === 'h264-encoder-select') { showToast('O novo encoder será usado ao reiniciar a transmissão.', 'info'); return; }
-      if (id === 'capture-backend-select') { showToast('A nova API de captura será usada ao reiniciar a transmissão.', 'info'); return; }
+      if (id === 'capture-backend-select') { showToast('A nova API gráfica será usada ao reiniciar a transmissão.', 'info'); return; }
+      if (id === 'capture-method-select') { showToast('O novo método de captura será usado ao reiniciar a transmissão.', 'info'); return; }
       const settings = readCaptureSettings();
       settings.videoCodec = provider.session.videoCodec || provider.session.video_codec || settings.videoCodec;
       settings.h264Encoder = provider.requestedSettings?.h264Encoder || provider.session.h264Encoder || provider.session.h264_encoder || null;
       // Other live changes must preserve the active API until the next start.
       settings.captureBackend = provider.requestedSettings?.captureBackend || null;
+      settings.captureApi = provider.requestedSettings?.captureApi || provider.session.captureApi || null;
       pending = pending.then(async () => {
         if (!session.isDisposed && getProvider() === provider && provider.session) await provider.reconfigure(settings);
       }).catch(error => showToast(error.message, 'error'));

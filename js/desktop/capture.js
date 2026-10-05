@@ -36,6 +36,7 @@ export function normalizeNativeCaptureState(state = {}) {
         videoCodec: state.videoCodec || state.video_codec || null,
         h264Encoder: state.h264Encoder || state.h264_encoder || null,
         captureBackend: state.captureBackend || state.capture_backend || null,
+        captureApi: state.captureApi || state.capture_api || null,
         captureFallbackReason: state.captureFallbackReason || state.capture_fallback_reason || null,
         videoRtpPort: state.videoRtpPort == null && state.video_rtp_port == null
             ? null
@@ -110,7 +111,7 @@ export async function getAudioExclusionCandidates() {
     }
 }
 
-export async function startNativeCapture({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, showCursor = undefined, width, height, fps, bitrateKbps, excludeApp } = {}) {
+export async function startNativeCapture({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, captureApi = null, showCursor = undefined, width, height, fps, bitrateKbps, excludeApp } = {}) {
     if (!isDesktopApp()) throw new Error('Captura nativa só está disponível no app desktop');
     const args = {
         sourceId: requireSourceId(sourceId),
@@ -120,6 +121,7 @@ export async function startNativeCapture({ sourceId, audioMode = 'none', videoCo
     if (videoCodec) args.videoCodec = String(videoCodec);
     if (h264Encoder) args.h264Encoder = String(h264Encoder);
     if (captureBackend) args.captureBackend = String(captureBackend);
+    if (captureApi) args.captureApi = String(captureApi);
     if (width != null) args.width = Number(width);
     if (height != null) args.height = Number(height);
     if (fps != null) args.fps = Number(fps);
@@ -131,13 +133,14 @@ export async function startNativeCapture({ sourceId, audioMode = 'none', videoCo
 
 export async function reconfigureNativeCapture(options = {}) {
     if (!isDesktopApp()) return null;
-    const { sessionId, audioMode, videoCodec, h264Encoder, captureBackend, showCursor, width, height, fps, bitrateKbps, excludeApp } = options;
+    const { sessionId, audioMode, videoCodec, h264Encoder, captureBackend, captureApi, showCursor, width, height, fps, bitrateKbps, excludeApp } = options;
     if (!sessionId) throw new Error('Sessão de captura nativa inválida para reconfiguração');
     const args = { sessionId };
     if (audioMode !== undefined) args.audioMode = String(audioMode);
     if (videoCodec !== undefined) args.videoCodec = String(videoCodec);
     if (h264Encoder !== undefined) args.h264Encoder = String(h264Encoder);
     if (captureBackend != null) args.captureBackend = String(captureBackend);
+    if (captureApi != null) args.captureApi = String(captureApi);
     if (showCursor !== undefined) args.showCursor = Boolean(showCursor);
     if (width != null) args.width = Number(width);
     if (height != null) args.height = Number(height);

@@ -62,6 +62,6 @@
 .streaming-option-tooltip dt { margin-top: 10px; font-weight: 600; color: var(--accent-text); }
 .streaming-option-tooltip dd { margin: 3px 0 0; color: var(--text-muted); }
 .streaming-options-footer { border-top: 1px solid var(--border-color); padding-top: 12px; }
-body.streamer-page > .streaming-options { margin: 12px 0; grid-template-columns: repeat(3, minmax(0, 1fr)); }
+body.streamer-page > .streaming-options { margin: 12px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 body.streamer-page > .streaming-options .streaming-options-heading, body.streamer-page > .streaming-options .streaming-options-footer { grid-column: 1 / -1; }
 @media (max-width: 700px) { body.streamer-page > .streaming-options { grid-template-columns: 1fr; } .streaming-option-label label span { display: block; margin: 3px 0 0; } }
