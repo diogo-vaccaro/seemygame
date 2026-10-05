@@ -53,3 +53,18 @@ export function receiverContinuity(timeline, browser, initialDecoded = 0) {
   return {deltas, stalledIntervals:deltas.filter(d => d === 0).length,
     valid:deltas.length > 0 && deltas.every(d => Number.isFinite(d) && d > 0)};
 }
+
+/** Decoded FPS alone also counts black/stale video. The synthetic benchmark
+ * requires its session/CRC marker before spending a full measurement interval. */
+export function rendererContentReadiness(status, minimumSamples = 3) {
+  const samples = status?.opticalSamples;
+  const uint32 = value => Number.isInteger(value) && value >= 0 && value <= 0xffffffff;
+  const markers = Array.isArray(status?.optics) ? status.optics.filter(row =>
+    uint32(row?.seq) && uint32(row?.sourceTime32) && Number.isFinite(row?.captureEpoch)) : [];
+  const distinctMarkers = new Set(markers.map(row => `${row.seq}:${row.sourceTime32}`)).size;
+  const enoughSamples = Number.isInteger(samples) && samples >= minimumSamples;
+  const valid = enoughSamples && distinctMarkers >= minimumSamples;
+  return {valid, opticalSamples:Number.isInteger(samples)?samples:0,
+    distinctMarkers, rejectedReads:status?.rejectedReads??null,
+    reason:valid?null:enoughSamples&&distinctMarkers>0?'synthetic-optical-marker-not-advancing':'no-valid-synthetic-optical-marker'};
+}

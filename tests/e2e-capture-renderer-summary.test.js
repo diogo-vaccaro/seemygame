@@ -25,7 +25,7 @@ describe('Controlled capture/renderer comparisons',()=>{
   expect(captureRendererComparisons({runs})[3].conclusion).toBe('unresolved-within-clock-error');
  });
  it('detects order effects instead of averaging them away',()=>{
-  const runs=[run('window-wgc',1,150),run('monitor-dxgi',1,120),run('window-wgc',2,130),run('monitor-dxgi',2,170)];
+  const runs=[run('monitor-wgc',1,150),run('monitor-dxgi',1,120),run('monitor-wgc',2,130),run('monitor-dxgi',2,170)];
   expect(captureRendererComparisons({runs})[2].conclusion).toBe('inconsistent-or-unresolved');
  });
  it('requires repeated, valid optical provenance',()=>{
@@ -33,9 +33,18 @@ describe('Controlled capture/renderer comparisons',()=>{
   expect(captureRendererComparisons({runs})[1].conclusion).toBe('invalid-evidence');
  });
  it('preserves failed attempts without optical evidence instead of crashing',()=>{
-  const runs=[1,2].flatMap(n=>[run('window-wgc',n,150),run('monitor-dxgi',n,null,{status:'failed',visualAgeMs:undefined})]);
+  const runs=[1,2].flatMap(n=>[run('monitor-wgc',n,150),run('monitor-dxgi',n,null,{status:'failed',visualAgeMs:undefined})]);
   const comparison=captureRendererComparisons({runs})[2];
   expect(comparison.conclusion).toBe('invalid-evidence');
   expect(comparison.rows[0].deltaMs).toBeNull();
+ });
+ it('compares DXGI only against monitor WGC, retaining a separate idle baseline',()=>{
+  const runs=[1,2].flatMap(n=>[run('window-wgc',n,200),run('monitor-wgc',n,160),run('monitor-dxgi',n,120),run('monitor-idle-wgc',n,65),run('monitor-idle-dxgi',n,60)]);
+  const comparisons=captureRendererComparisons({runs});
+  expect(comparisons[2].baseline).toBe('monitor-wgc');
+  expect(comparisons[2].rows.every(row=>row.deltaMs===-40)).toBe(true);
+  expect(comparisons[5].conclusion).toBe('unresolved-within-clock-error');
+  const windowsOnly=runs.filter(row=>row.case.id!=='monitor-wgc');
+  expect(captureRendererComparisons({runs:windowsOnly})[2].conclusion).toBe('insufficient-repetitions');
  });
 });

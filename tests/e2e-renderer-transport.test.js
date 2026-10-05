@@ -1,5 +1,5 @@
 import {describe,it,expect} from 'vitest';
-import {allowRendererCandidate,rendererRoute,sameRendererRoute,receiverContinuity} from '../tools/e2e/harness/renderer-transport.mjs';
+import {allowRendererCandidate,rendererRoute,sameRendererRoute,receiverContinuity,rendererContentReadiness} from '../tools/e2e/harness/renderer-transport.mjs';
 describe('renderer comparison transport qualification',()=>{
   const candidate=(address,type='host')=>`candidate:1 1 UDP 1 ${address} 5000 typ ${type}`;
   it('permits LAN plus public reflexive candidates without mixing VPNs',()=>{
@@ -28,5 +28,31 @@ describe('renderer comparison transport qualification',()=>{
     expect(receiverContinuity([{receiver:{decoded:20}},{receiver:{decoded:40}}],false).valid).toBe(true);
     expect(receiverContinuity([{browser:{inbound:{framesDecoded:35}}}],true,30).deltas).toEqual([5]);
     expect(receiverContinuity([{browser:{}}],true,30).valid).toBe(false);
+  });
+});
+
+describe('synthetic video content readiness',()=>{
+  const marker=(seq,time=seq*16)=>({seq,sourceTime32:time,captureEpoch:1000+time});
+  it('rejects decoded black video despite increasing frame counters',()=>{
+    const result=rendererContentReadiness({decoded:180,opticalSamples:0,optics:[],rejectedReads:24});
+    expect(result.valid).toBe(false);
+    expect(result.reason).toBe('no-valid-synthetic-optical-marker');
+    expect(result.rejectedReads).toBe(24);
+  });
+  it('rejects a frozen valid marker sampled many times',()=>{
+    const result=rendererContentReadiness({opticalSamples:24,optics:Array(24).fill(marker(1))});
+    expect(result.valid).toBe(false);
+    expect(result.distinctMarkers).toBe(1);
+    expect(result.reason).toBe('synthetic-optical-marker-not-advancing');
+  });
+  it('requires distinct frames and accepts sequence/timestamp rollover',()=>{
+    const optics=[marker(65535,0xfffffff0),marker(0,0),marker(1,16)];
+    expect(rendererContentReadiness({opticalSamples:3,optics}).valid).toBe(true);
+    expect(rendererContentReadiness({opticalSamples:2,optics}).valid).toBe(false);
+  });
+  it('rejects absent optical evidence and malformed markers',()=>{
+    expect(rendererContentReadiness().valid).toBe(false);
+    expect(rendererContentReadiness({opticalSamples:60}).valid).toBe(false);
+    expect(rendererContentReadiness({opticalSamples:3,optics:[marker(-1),marker(2,NaN),{seq:3,sourceTime32:48}]}).valid).toBe(false);
   });
 });

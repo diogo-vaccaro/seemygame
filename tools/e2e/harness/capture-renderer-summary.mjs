@@ -4,7 +4,7 @@ import {sameRendererRoute,sameRendererSource} from './renderer-transport.mjs';
 export function captureRendererComparisons(report) {
  const groups=new Map();
  for(const r of report.runs||[]){const xs=groups.get(r.case.id)||[];xs.push(r);groups.set(r.case.id,xs);}
- const pairs=[['priority','priority-normal','priority-high'],['monitor-wgc','window-wgc','monitor-wgc'],['monitor-dxgi','window-wgc','monitor-dxgi'],['native-renderer','window-wgc','native-receiver'],['native-renderer-idle','baseline-browser','baseline-native']];
+ const pairs=[['priority','priority-normal','priority-high'],['monitor-wgc','window-wgc','monitor-wgc'],['monitor-dxgi','monitor-wgc','monitor-dxgi'],['native-renderer','window-wgc','native-receiver'],['native-renderer-idle','baseline-browser','baseline-native'],['monitor-dxgi-idle','monitor-idle-wgc','monitor-idle-dxgi']];
  return pairs.map(([comparison,baseline,candidate])=>{
   const a=groups.get(baseline)||[],b=groups.get(candidate)||[];
   const evidence=a.map(x=>[x,b.find(y=>y.repetition===x.repetition)]).filter(x=>x[1]);

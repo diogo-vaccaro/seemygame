@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$RunId,[ValidateSet('receiver','observer')][string]$Role='receiver',[ValidateSet('start','stop')][string]$Mode='start',[string]$Token,[switch]$PrivateNetwork,[string]$AllowPrivateMediaFrom,[switch]$DebugOptics)
+param([Parameter(Mandatory=$true)][string]$RunId,[ValidateSet('receiver','observer')][string]$Role='receiver',[ValidateSet('start','stop')][string]$Mode='start',[string]$Token,[switch]$PrivateNetwork,[string]$AllowPrivateMediaFrom,[switch]$DebugOptics,[ValidateSet(8,30,60)][int]$ObserverFps=8)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 if($RunId -notmatch '^compare-[a-zA-Z0-9-]{1,90}$'){throw 'Invalid diagnostic run id'}
@@ -53,7 +53,7 @@ if($AllowPrivateMediaFrom){
 $gst=Join-Path $projectRoot 'native-media/gstreamer'
 $log=Join-Path $stage 'probe.log'
 $runner=Join-Path $stage 'start.ps1'
-$script="`$ErrorActionPreference='Stop'; `$env:SMG_COMPARE_PRIVATE_NETWORK='$([int][bool]$PrivateNetwork)'; `$env:SMG_COMPARE_ROLE='$Role'; `$env:SMG_COMPARE_DEBUG_OPTICS='$([int][bool]$DebugOptics)'; `$env:SMG_COMPARE_PORT='0'; `$env:SMG_COMPARE_TOKEN='$Token'; `$env:SEEMYGAME_GSTREAMER_ROOT=$(&$escape $gst); `$env:PATH=$(&$escape (Join-Path $gst 'bin'))+';'+`$env:PATH; `$env:GST_DEBUG='*:2'; Set-Location -LiteralPath $(&$escape $stage); `$ErrorActionPreference='Continue'; & $(&$escape $exe) run_transport_comparison_probe --ignored --nocapture --test-threads=1 *> $(&$escape $log)"
+$script="`$ErrorActionPreference='Stop'; `$env:SMG_COMPARE_PRIVATE_NETWORK='$([int][bool]$PrivateNetwork)'; `$env:SMG_COMPARE_ROLE='$Role'; `$env:SMG_COMPARE_DEBUG_OPTICS='$([int][bool]$DebugOptics)'; `$env:SMG_COMPARE_OBSERVER_FPS='$ObserverFps'; `$env:SMG_COMPARE_PORT='0'; `$env:SMG_COMPARE_TOKEN='$Token'; `$env:SEEMYGAME_GSTREAMER_ROOT=$(&$escape $gst); `$env:PATH=$(&$escape (Join-Path $gst 'bin'))+';'+`$env:PATH; `$env:GST_DEBUG='*:2'; Set-Location -LiteralPath $(&$escape $stage); `$ErrorActionPreference='Continue'; & $(&$escape $exe) run_transport_comparison_probe --ignored --nocapture --test-threads=1 *> $(&$escape $log)"
 [IO.File]::WriteAllText($runner,$script)
 $action=New-ScheduledTaskAction -Execute 'powershell.exe' -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -ExecutionPolicy Bypass -File `"$runner`"" -WorkingDirectory $stage
 $principal=New-ScheduledTaskPrincipal -UserId $identity -LogonType Interactive -RunLevel Limited

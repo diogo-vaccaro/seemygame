@@ -54,6 +54,8 @@ virtual_gamepads = {}
 pressed_keys = set()
 pressed_mouse_buttons = set()
 slot_pressed_keys = {}
+slot_pressed_mouse_buttons = {}
+active_client = None
 
 def _release_input(call, **kwargs):
     """Release an input even when the pointer is on PyAutoGUI's failsafe corner."""
@@ -80,13 +82,14 @@ def release_slot(slot):
     except (TypeError, ValueError):
         return release_all()
 
+    succeeded = True
     # 1. Reset do gamepad virtual correspondente ao slot
     if HAVE_VGAMEPAD and target_slot in virtual_gamepads:
         try:
             virtual_gamepads[target_slot].reset()
             virtual_gamepads[target_slot].update()
         except Exception:
-            pass
+            succeeded = False
 
     # 2. Reset das teclas retidas por este slot
     if HAVE_PYAUTOGUI and target_slot in slot_pressed_keys:
@@ -95,17 +98,32 @@ def release_slot(slot):
         for k in keys_to_release:
             # Verifica se nenhum outro slot ativo ainda segura a mesma tecla
             if not any(k in s_keys for s_id, s_keys in slot_pressed_keys.items() if s_id != target_slot):
-                _release_input(pyautogui.keyUp, key=k)
-                pressed_keys.discard(k)
+                if _release_input(pyautogui.keyUp, key=k):
+                    pressed_keys.discard(k)
+                else:
+                    slot_pressed_keys[target_slot].add(k)
+                    succeeded = False
 
-    return True
+    buttons = slot_pressed_mouse_buttons.pop(target_slot, set())
+    if target_slot == 1:
+        buttons |= pressed_mouse_buttons - set().union(*slot_pressed_mouse_buttons.values())
+    if HAVE_PYAUTOGUI:
+        for button in buttons:
+            if any(button in held for held in slot_pressed_mouse_buttons.values()):
+                continue
+            if _release_input(pyautogui.mouseUp, button=button):
+                pressed_mouse_buttons.discard(button)
+            else:
+                slot_pressed_mouse_buttons.setdefault(target_slot, set()).add(button)
+                succeeded = False
+
+    return succeeded
 
 def release_all():
     """Liberação total de todas as teclas e botões do mouse (All-Up / Emergency Stop)."""
-    if not HAVE_PYAUTOGUI:
-        return True
+    succeeded = True
     remaining_keys = set()
-    for k in list(pressed_keys):
+    for k in list(pressed_keys) if HAVE_PYAUTOGUI else []:
         if not _release_input(pyautogui.keyUp, key=k):
             remaining_keys.add(k)
     pressed_keys.clear()
@@ -113,11 +131,12 @@ def release_all():
     slot_pressed_keys.clear()
 
     remaining_buttons = set()
-    for b in list(pressed_mouse_buttons):
+    for b in list(pressed_mouse_buttons) if HAVE_PYAUTOGUI else []:
         if not _release_input(pyautogui.mouseUp, button=b):
             remaining_buttons.add(b)
     pressed_mouse_buttons.clear()
     pressed_mouse_buttons.update(remaining_buttons)
+    slot_pressed_mouse_buttons.clear()
 
     # Liberação total de todos os gamepads virtuais ativos
     if HAVE_VGAMEPAD and virtual_gamepads:
@@ -126,9 +145,9 @@ def release_all():
                 gp.reset()
                 gp.update()
             except Exception:
-                pass
+                succeeded = False
 
-    return not pressed_keys and not pressed_mouse_buttons
+    return succeeded and not pressed_keys and not pressed_mouse_buttons
 
 # Mapeamento W3C Standard Gamepad para constantes XUSB do ViGEmBus
 W3C_TO_XUSB = {
@@ -222,6 +241,7 @@ def is_valid_origin(origin_header):
 auth_token = None
 
 async def handle_client(websocket):
+    global active_client
     # 1. Validação de Origem (A05)
     headers = getattr(websocket, "request_headers", None)
     if headers is None:
@@ -258,7 +278,11 @@ async def handle_client(websocket):
 
                 # Handshake de autenticação se token estiver ativado
                 if not authenticated:
-                    if msg_type == "AUTH" and data.get("token") == auth_token:
+                    if msg_type == "AUTH" and auth_token and data.get("token") == auth_token:
+                        if active_client is not None and active_client is not websocket:
+                            await websocket.close(4009, "Another paired client is active")
+                            return
+                        active_client = websocket
                         authenticated = True
                         print("[Co-op Agent] Cliente autenticado com token de pareamento!")
                         await websocket.send(json.dumps({"type": "AUTH_OK", **agent_capabilities()}))
@@ -330,6 +354,12 @@ async def handle_client(websocket):
 
                 # 2. Mouse
                 elif msg_type == "INPUT_MOUSE" and HAVE_PYAUTOGUI:
+                    try:
+                        slot = int(data.get("slot", 1))
+                    except (TypeError, ValueError):
+                        continue
+                    if slot not in range(4):
+                        continue
                     action = data.get("action")
                     if action == "move":
                         try:
@@ -349,6 +379,9 @@ async def handle_client(websocket):
                     elif action in {"down", "up"} and data.get("button") in {0, 1, 2}:
                         btn = {0: "left", 1: "middle", 2: "right"}[data.get("button")]
                         if action == "up":
+                            slot_pressed_mouse_buttons.setdefault(slot, set()).discard(btn)
+                            if any(btn in held for held in slot_pressed_mouse_buttons.values()):
+                                continue
                             try:
                                 pyautogui.mouseUp(button=btn)
                             except PyAutoGUIFailSafe:
@@ -358,6 +391,7 @@ async def handle_client(websocket):
                             pressed_mouse_buttons.discard(btn)
                             continue
                         pressed_mouse_buttons.add(btn)
+                        slot_pressed_mouse_buttons.setdefault(slot, set()).add(btn)
                         try:
                             pyautogui.mouseDown(button=btn)
                         except PyAutoGUIFailSafe:
@@ -423,14 +457,17 @@ async def handle_client(websocket):
             # wait_for garante que nenhuma tecla permaneça pressionada.
     except asyncio.TimeoutError:
         print("[Co-op Agent] Sessão ociosa expirada; liberando todos os inputs.")
-        release_all()
+        if authenticated and active_client is websocket:
+            release_all()
         await websocket.close(4004, "Session timeout")
 
     except websockets.exceptions.ConnectionClosed:
         print("[Co-op Agent] Navegador desconectado.")
     finally:
         # A06: Garante que nenhuma tecla ou clique fique travado na desconexão
-        release_all()
+        if authenticated and active_client is websocket:
+            release_all()
+            active_client = None
 
 async def main(host, port, token):
     global auth_token
