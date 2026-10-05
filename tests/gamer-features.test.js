@@ -221,7 +221,7 @@ describe('Integração de Recursos Gamer Profissionais (app.js)', () => {
 
     it('deve processar WHITEBOARD_SYNC e carregar elementos na lousa', () => {
       const syncSpy = vi.spyOn(whiteboardManager, 'setElements');
-      const elements = [{ id: '1', type: 'line' }];
+      const elements = [{ id: '1', type: 'line', points: [{ x: 0, y: 0 }, { x: 100, y: 100 }] }];
       handleIncomingP2PMessage({ type: 'WHITEBOARD_SYNC', elements }, null);
       expect(syncSpy).toHaveBeenCalledWith(elements);
     });
