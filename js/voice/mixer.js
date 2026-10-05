@@ -48,7 +48,9 @@ toggleDeafen() {
   }
 
 setVoiceMode(mode) {
-    this.voiceMode = mode === 'ptt' ? 'ptt' : 'vad';
+    const nextMode = mode === 'ptt' ? 'ptt' : 'vad';
+    if (this.voiceMode !== nextMode) this.isPttActive = false;
+    this.voiceMode = nextMode;
     if (this.voiceMode === 'ptt' && !this.isPttActive) {
       this.setMuted(true);
     } else if (this.voiceMode === 'vad') {

@@ -3,6 +3,30 @@ import { EMOJI_REACTION_PRESETS } from './shared.js';
 /** DiscordUIController: voice. State and lifetime remain owned by the composed engine. */
 export const withDiscordUIControllerVoice = Base => class extends Base {
 bindVoiceEvents() {
+    const heldPttKeys = new Set();
+    const pttKey = code => code === 'CapsLock' || code === 'ControlRight';
+    const releasePtt = () => {
+      heldPttKeys.clear();
+      if (this.voiceManager.isPttActive) this.voiceManager.setPttActive(false);
+    };
+    this._cleanupFns.push(releasePtt);
+    this.listen(window, 'keydown', event => {
+      if (!pttKey(event.code) || event.isComposing || document.hidden ||
+          !this.voiceManager.isInVoice || this.voiceManager.voiceMode !== 'ptt' || this.voiceManager.isDeafened ||
+          event.target?.closest?.('input,textarea,select,[contenteditable]:not([contenteditable="false"])')) return;
+      event.preventDefault();
+      if (heldPttKeys.has(event.code)) return;
+      heldPttKeys.add(event.code);
+      this.voiceManager.setPttActive(true);
+    });
+    this.listen(window, 'keyup', event => {
+      if (!heldPttKeys.delete(event.code)) return;
+      event.preventDefault();
+      if (this.voiceManager.voiceMode === 'ptt') this.voiceManager.setPttActive(heldPttKeys.size > 0 && this.voiceManager.isInVoice && !this.voiceManager.isDeafened);
+    });
+    this.listen(window, 'blur', releasePtt);
+    this.listen(window, 'pagehide', releasePtt);
+    this.listen(document, 'visibilitychange', () => { if (document.hidden) releasePtt(); });
     this._cleanupFns.push(() => this._voiceRenderController?.abort());
     this.observe(this.voiceManager, 'participantUpdate', (participants) => {
       this.renderVoiceParticipants(participants);
@@ -20,6 +44,7 @@ bindVoiceEvents() {
     });
 
     this.observe(this.voiceManager, 'voiceStateChange', (state) => {
+      if (!state.isInVoice || state.voiceMode !== 'ptt') heldPttKeys.clear();
       this.updateVoiceControls(state);
     });
 
