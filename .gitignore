@@ -6,7 +6,7 @@ src-tauri/target/
 native-media/gstreamer/
 native-media/manifest.json
 .native-media-sdk/
-output/
+/output/
 *.log
 __pycache__/
 *.pyc
