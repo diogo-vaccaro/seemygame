@@ -451,7 +451,8 @@ describe('Módulo: ui.js', () => {
 
       const card = document.getElementById('card-fs-peer');
       const video = card.querySelector('video');
-      const fsSpy = vi.spyOn(video, 'requestFullscreen');
+      card.requestFullscreen = vi.fn(async () => {});
+      const fsSpy = card.requestFullscreen;
 
       const fsBtn = Array.from(card.querySelectorAll('.card-controls button')).find(b => b.textContent.includes('Tela Cheia'));
       fsBtn.click();
@@ -526,7 +527,8 @@ describe('Módulo: ui.js', () => {
       expect(volSlider).not.toBeNull();
 
       const video = card.querySelector('video');
-      const fsSpy = vi.spyOn(video, 'requestFullscreen');
+      card.requestFullscreen = vi.fn(async () => {});
+      const fsSpy = card.requestFullscreen;
       overlayFsBtn.click();
       expect(fsSpy).toHaveBeenCalled();
     });
@@ -541,7 +543,8 @@ describe('Módulo: ui.js', () => {
 
       const card = document.getElementById('card-dbl-peer');
       const video = card.querySelector('video');
-      const fsSpy = vi.spyOn(video, 'requestFullscreen');
+      card.requestFullscreen = vi.fn(async () => {});
+      const fsSpy = card.requestFullscreen;
 
       video.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }));
       expect(fsSpy).toHaveBeenCalled();

@@ -11,12 +11,14 @@ const change = (id, value) => { select(id).value = value; select(id).dispatchEve
 beforeEach(() => { document.body.innerHTML = template; localStorage.clear(); session = new SessionContext(); });
 afterEach(async () => { await session.dispose(); vi.unstubAllGlobals(); localStorage.clear(); });
 
-it('mantém as três categorias visíveis na web e explica os campos controlados pelo browser', () => {
+it('mantém as quatro categorias visíveis na web e explica os campos controlados pelo browser', () => {
   syncStreamingOptions({ desktop: false });
   expect(select('h264-encoder-select').disabled).toBe(true);
   expect(select('capture-backend-select').disabled).toBe(true);
+  expect(select('capture-method-select').disabled).toBe(true);
   expect(select('h264-encoder-note').textContent).toContain('não permite forçar');
   expect(select('capture-backend-note').textContent).toContain('getDisplayMedia');
+  expect(select('capture-method-note').textContent).toContain('getDisplayMedia');
 });
 it('bloqueia D3D12 com MF/CPU e HEVC/AV1, sem oferecer combinações ainda não integradas', () => {
   for (const [codec, encoder] of [['h264', 'mf'], ['h264', 'cpu'], ['hevc', 'mf'], ['av1', 'cpu']]) {
@@ -58,10 +60,31 @@ it('troca pendente de encoder/API não reconfigura o worker e não vaza para uma
   document.body.insertAdjacentHTML('beforeend', '<input id="bitrate-slider" value="4500">');
   const provider = { session: { sessionId: 'live', videoCodec: 'h264', h264Encoder: 'nvenc', captureBackend: 'd3d12' }, requestedSettings: { h264Encoder: 'auto', captureBackend: 'auto' }, reconfigure: vi.fn().mockResolvedValue({}) };
   const toast = vi.fn(); bindCaptureSettings(session, () => provider, toast);
-  change('h264-encoder-select', 'cpu'); change('capture-backend-select', 'd3d11');
-  expect(provider.reconfigure).not.toHaveBeenCalled(); expect(toast).toHaveBeenCalledTimes(2);
+  change('h264-encoder-select', 'cpu'); change('capture-backend-select', 'd3d11'); change('capture-method-select', 'dxgi');
+  expect(provider.reconfigure).not.toHaveBeenCalled(); expect(toast).toHaveBeenCalledTimes(3);
   change('bitrate-slider', '5000');
-  await vi.waitFor(() => expect(provider.reconfigure).toHaveBeenCalledWith(expect.objectContaining({ bitrateKbps: 5000, h264Encoder: 'auto', captureBackend: 'auto' })));
+  await vi.waitFor(() => expect(provider.reconfigure).toHaveBeenCalledWith(expect.objectContaining({ bitrateKbps: 5000, h264Encoder: 'auto', captureBackend: 'auto', captureApi: null })));
+});
+it('persiste DXGI independentemente da API gráfica e esclarece o compartilhamento do monitor', async () => {
+  localStorage.setItem('seemygame_capture_method', 'dxgi');
+  localStorage.setItem('seemygame_capture_backend', 'd3d11');
+  bindStreamingOptions(session, { desktop: true, loadCapabilities: async () => caps });
+  await vi.waitFor(() => expect(select('capture-method-select').value).toBe('dxgi'));
+  expect(readCaptureSettings()).toMatchObject({ captureApi: 'dxgi', captureBackend: 'd3d11' });
+  expect(select('capture-method-note').textContent).toContain('tudo que aparecer');
+  change('capture-backend-select', 'd3d12');
+  expect(select('capture-method-select').value).toBe('dxgi');
+  change('capture-method-select', 'wgc');
+  expect(localStorage.getItem('seemygame_capture_method')).toBe('wgc');
+  expect(select('capture-backend-select').value).toBe('d3d12');
+});
+it('preserva o método ativo ao reconfigurar bitrate com uma preferência diferente pendente', async () => {
+  document.body.insertAdjacentHTML('beforeend', '<input id="bitrate-slider" value="4500">');
+  const provider = { session: { sessionId: 'live', captureApi: 'dxgi' }, requestedSettings: { captureApi: 'dxgi' }, reconfigure: vi.fn().mockResolvedValue({}) };
+  bindCaptureSettings(session, () => provider, vi.fn());
+  change('capture-method-select', 'auto');
+  change('bitrate-slider', '5000');
+  await vi.waitFor(() => expect(provider.reconfigure).toHaveBeenCalledWith(expect.objectContaining({ captureApi: 'dxgi', bitrateKbps: 5000 })));
 });
 it('ajuda abre com foco, fecha com Escape e remove listeners ao encerrar a sessão', async () => {
   bindStreamingOptions(session, { desktop: false });

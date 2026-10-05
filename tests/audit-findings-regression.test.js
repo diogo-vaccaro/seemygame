@@ -259,6 +259,9 @@ describe('Audit Findings Regression Suite (A01 - A15)', () => {
     runtime.viewerState.targetHostId = 'trusted-host';
 
     const peer = await runtime.initViewerPeer(session);
+    await runtime.connectToStreamer('trusted-host', null, session);
+    runtime.viewerState.activeConn.open = true;
+    runtime.viewerState.activeConn.emit('open');
     const call = new MockCall('trusted-host');
     peer.emit('call', call);
     const stream = { getTracks: () => [], getVideoTracks: () => [], getAudioTracks: () => [] };
@@ -401,6 +404,7 @@ describe('Audit Findings Regression Suite (A01 - A15)', () => {
 
     const handlers = app.session.messageHandlers;
     expect(handlers).toBeTruthy();
+    app.session.dispatcher.dispatch({ type: 'VOICE_SIGNAL', action: 'VOICE_JOINED', peerId: 'z-member' }, memberConn);
 
     await app.joinVoice();
 

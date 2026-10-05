@@ -82,10 +82,12 @@ describe('Fase 3: Separação de Entrypoints de Páginas (js/entries)', () => {
 
       // Com conexão ativa
       const mockConn = {
+        peer: 'streamer-test',
         open: true,
         send: vi.fn()
       };
       viewerEntry.viewerState.activeConn = mockConn;
+      viewerEntry.promptViewerPin('streamer-test');
       expect(viewerEntry.submitViewerPin('1234')).toBe(true);
       expect(mockConn.send).toHaveBeenCalledWith(expect.objectContaining({
         type: 'REQUEST_STREAM',

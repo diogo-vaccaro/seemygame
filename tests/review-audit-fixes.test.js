@@ -7,10 +7,12 @@ import {
   setPartyModeEnabled,
   isPartyModeEnabled,
   handleHostCoopMessage,
+  createCoopController,
   revokeCoopPlayer,
   revokeAllCoopPlayers,
   pressedBrowserKeys
 } from '../js/coop.js';
+import { dispatchHostKeyboardInput } from '../js/coop/transport.js';
 
 class MockMediaRecorder {
   constructor(stream, options) {
@@ -336,7 +338,10 @@ describe('Auditoria Técnica (R1 a R10): Validação de Regressões e Estabilida
     });
 
     it('P3: múltiplos slots com a mesma tecla não devem sofrer interferência mútua na revogação individual', () => {
-      setMaxCoopPlayers(2);
+      const controller = createCoopController();
+      const { coopSlots, pressedBrowserKeys } = controller;
+      const inputPorts = { isCompanionConnected: false, slotPressedKeys: controller.slotPressedKeys, pressedBrowserKeys };
+      controller.setMaxCoopPlayers(2);
       const connP2 = { open: true, send: vi.fn() };
       const connP3 = { open: true, send: vi.fn() };
       coopSlots.set(1, { peerId: 'p2-peer', conn: connP2, name: 'P2' });
@@ -348,26 +353,28 @@ describe('Auditoria Técnica (R1 a R10): Validação de Regressões e Estabilida
       // Slot 1 e Slot 2 pressionam a mesma tecla 'KeyW'
       const downMsgP2 = { type: 'INPUT_KEY', slot: 1, code: 'KeyW', key: 'w', action: 'down' };
       const downMsgP3 = { type: 'INPUT_KEY', slot: 2, code: 'KeyW', key: 'w', action: 'down' };
-      handleHostCoopMessage('p2-peer', downMsgP2, connP2);
-      handleHostCoopMessage('p3-peer', downMsgP3, connP3);
+      // Exercise ownership cleanup directly; the protocol permits keyboard only in slot 1.
+      dispatchHostKeyboardInput(inputPorts, downMsgP2, 1);
+      dispatchHostKeyboardInput(inputPorts, downMsgP3, 2);
 
       expect(pressedBrowserKeys.has('KeyW')).toBe(true);
 
       // Revoga Player 2 (Slot 1)
-      revokeCoopPlayer(1, true);
+      controller.revokeCoopPlayer(1, true);
 
       // Tecla KeyW NÃO deve ser liberada nem ter keyup emitido porque Player 3 (Slot 2) ainda a segura!
       expect(pressedBrowserKeys.has('KeyW')).toBe(true);
       expect(keyupDispatched).not.toHaveBeenCalled();
 
       // Agora revoga Player 3 (Slot 2)
-      revokeCoopPlayer(2, true);
+      controller.revokeCoopPlayer(2, true);
 
       // Agora sim a tecla deve ser liberada e keyup despachado!
       expect(pressedBrowserKeys.has('KeyW')).toBe(false);
       expect(keyupDispatched).toHaveBeenCalled();
 
       window.removeEventListener('keyup', keyupDispatched);
+      controller.dispose();
     });
   });
 });

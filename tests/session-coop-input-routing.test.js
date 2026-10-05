@@ -23,6 +23,7 @@ describe.each(['streamer', 'room'])('Roteamento de inputs Co-op: sessão %s', ro
     ports = {
       coopSlots: new Map([[1, { peerId: 'player', slot: 1 }]]),
       partyModeEnabled: false, maxCoopPlayers: 1,
+      isCompanionConnected: true, companionCapabilities: { mouse: true },
       dispatchHostKeyboardInput: effects.INPUT_KEY, dispatchHostMouseInput: effects.INPUT_MOUSE,
       dispatchHostGamepadInput: effects.INPUT_GAMEPAD, dispatchHostInputReset: effects.INPUT_RESET
     };

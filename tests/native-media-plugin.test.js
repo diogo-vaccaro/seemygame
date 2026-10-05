@@ -1,10 +1,11 @@
 import { afterEach, expect, it, vi } from 'vitest';
-const ipc = vi.hoisted(() => ({ create: vi.fn(), close: vi.fn(async () => {}), ice: vi.fn(async () => {}) }));
-vi.mock('../js/desktop.js', () => ({ createNativeViewerPeer: ipc.create, closeNativeViewerPeer: ipc.close, addNativeViewerIceCandidate: ipc.ice, listenNativeCaptureBridge: vi.fn(), isDesktopApp: () => false }));
+const ipc = vi.hoisted(() => ({ create: vi.fn(), close: vi.fn(async () => {}), ice: vi.fn(async () => {}), desktop: false, listener: null }));
+vi.mock('../js/desktop.js', () => ({ createNativeViewerPeer: ipc.create, closeNativeViewerPeer: ipc.close, addNativeViewerIceCandidate: ipc.ice,
+  listenNativeCaptureBridge: async listener => { ipc.listener = listener; return vi.fn(); }, isDesktopApp: () => ipc.desktop }));
 vi.mock('../js/ui.js', () => ({ addOrUpdateVideoCard: vi.fn(), removeVideoCard: vi.fn() }));
 import { createSessionContext } from '../js/core/session-context.js';
 import { NativeMediaPlugin } from '../js/plugins/native-media-plugin.js';
-afterEach(() => vi.clearAllMocks());
+afterEach(() => { vi.clearAllMocks(); vi.restoreAllMocks(); ipc.desktop = false; ipc.listener = null; });
 function fixture() {
   const session = createSessionContext(); session.getPeerId = () => 'host';
   const provider = { session: { sessionId: 'capture-a' } };
@@ -24,8 +25,88 @@ it('gates direct stream negotiation by admission and capture identity', async ()
 });
 it('closes a native peer whose negotiation completes after disposal without sending an answer', async () => {
   const { session, plugin, conn } = fixture(); let finish;
+  plugin.broadcastTo(conn);
+  const identity = plugin.outgoing.get(conn.peer);
+  conn.send.mockClear();
   ipc.create.mockImplementation(() => new Promise(resolve => { finish = resolve; }));
-  const pending = plugin.answer({ sessionId: 'capture-a', sdp: 'offer' }, conn);
+  const pending = plugin.answer({ ...identity, sdp: 'offer' }, conn);
   session.dispose(); finish({ sdp: 'answer' }); await pending; await session.disposeAsync();
-  expect(ipc.close).toHaveBeenCalledWith('capture-a', 'guest'); expect(conn.send).not.toHaveBeenCalled();
+  expect(ipc.close).toHaveBeenCalledWith('capture-a', 'guest', identity.negotiationId);
+  expect(conn.send.mock.calls.flat().some(data => data.type === 'DIRECT_STREAM_ANSWER')).toBe(false);
+});
+it('routes simultaneous native streams by session, direction and negotiation, including queued ICE', async () => {
+  const { session, plugin, conn } = fixture();
+  ipc.create.mockResolvedValue({ sdp: 'answer' });
+  plugin.broadcastTo(conn);
+  const sender = plugin.outgoing.get(conn.peer);
+  await plugin.answer({ ...sender, sdp: 'offer' }, conn);
+  const incoming = { sessionId: 'remote-capture', negotiationId: 'remote-generation' };
+  await plugin.receive(incoming, conn);
+  const receiver = plugin.receivers.get(conn.peer);
+  const add = vi.spyOn(receiver.pc, 'addIceCandidate');
+  const remote = vi.spyOn(receiver.pc, 'setRemoteDescription');
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ICE_CANDIDATE', ...incoming, target: 'receiver', candidate: 'remote-ice' }, conn);
+  expect(ipc.ice).not.toHaveBeenCalled(); expect(receiver.pending).toHaveLength(1);
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ANSWER', ...incoming, sdp: 'remote-answer' }, conn);
+  await vi.waitFor(() => expect(add).toHaveBeenCalledWith({ candidate: 'remote-ice', sdpMLineIndex: 0 }));
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ICE_CANDIDATE', ...sender, target: 'sender', candidate: 'local-ice', mlineIndex: 1 }, conn);
+  expect(ipc.ice).toHaveBeenCalledWith('capture-a', 'guest', 1, 'local-ice', sender.negotiationId);
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ICE_CANDIDATE', ...incoming, negotiationId: 'obsolete', target: 'receiver', candidate: 'stale' }, conn);
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ICE_CANDIDATE', ...sender, negotiationId: 'obsolete', target: 'sender', candidate: 'stale' }, conn);
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ICE_CANDIDATE', candidate: 'ambiguous' }, conn);
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ANSWER', ...incoming, negotiationId: 'obsolete', sdp: 'stale' }, conn);
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_STOP', ...incoming, negotiationId: 'obsolete' }, conn);
+  expect(add).toHaveBeenCalledTimes(1); expect(ipc.ice).toHaveBeenCalledTimes(1);
+  expect(remote).toHaveBeenCalledTimes(1); expect(plugin.receivers.get(conn.peer)).toBe(receiver);
+  receiver.pc.onicecandidate({ candidate: { candidate: 'browser-ice', sdpMLineIndex: 0 } });
+  expect(conn.send).toHaveBeenLastCalledWith(expect.objectContaining({ type: 'DIRECT_STREAM_ICE_CANDIDATE', ...incoming, target: 'sender' }));
+  await session.disposeAsync();
+});
+it('keeps the new receiver alive when an old offer fails or reports connection failure', async () => {
+  const { session, plugin, conn } = fixture(); let rejectOffer;
+  vi.spyOn(RTCPeerConnection.prototype, 'createOffer').mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOffer = reject; }));
+  const pending = plugin.receive({ sessionId: 'remote-capture', negotiationId: 'old' }, conn);
+  const old = plugin.receivers.get(conn.peer);
+  const assertion = expect(pending).rejects.toThrow('old offer failed');
+  await plugin.receive({ sessionId: 'remote-capture', negotiationId: 'new' }, conn);
+  const current = plugin.receivers.get(conn.peer), close = vi.spyOn(current.pc, 'close');
+  rejectOffer(new Error('old offer failed')); await assertion;
+  old.pc.connectionState = 'failed'; old.pc.onconnectionstatechange();
+  old.pc.onicecandidate({ candidate: { candidate: 'obsolete' } });
+  expect(plugin.receivers.get(conn.peer)).toBe(current); expect(close).not.toHaveBeenCalled();
+  expect(conn.send.mock.calls.flat().some(data => data.candidate === 'obsolete')).toBe(false);
+  await session.disposeAsync();
+});
+it('labels native bridge ICE for the remote receiver and ignores events from an obsolete capture', async () => {
+  ipc.desktop = true;
+  const { session, plugin, conn } = fixture();
+  ipc.create.mockResolvedValue({ sdp: 'answer' });
+  plugin.broadcastTo(conn);
+  const identity = plugin.outgoing.get(conn.peer);
+  await plugin.answer({ ...identity, sdp: 'offer' }, conn);
+  conn.send.mockClear();
+  ipc.listener({ event: 'ice-candidate', session_id: 'obsolete', peer_id: 'guest', candidate: 'stale' });
+  ipc.listener({ event: 'ice-candidate', session_id: 'capture-a', peer_id: 'guest', negotiation_id: 'obsolete-negotiation', candidate: 'stale' });
+  expect(conn.send).not.toHaveBeenCalled();
+  ipc.listener({ event: 'ice-candidate', session_id: 'capture-a', peer_id: 'guest', negotiation_id: identity.negotiationId, candidate: 'native-ice', mline_index: 1 });
+  expect(conn.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'DIRECT_STREAM_ICE_CANDIDATE', ...identity, target: 'receiver', candidate: 'native-ice', mlineIndex: 1 }));
+  await session.disposeAsync();
+});
+
+it('keeps a reconnected native bridge when a stale native create resolves after it', async () => {
+  const { session, plugin, conn } = fixture(); let finish;
+  plugin.broadcastTo(conn); const old = plugin.outgoing.get(conn.peer);
+  ipc.create.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const pending = plugin.answer({ ...old, sdp: 'old-offer' }, conn);
+  session.eventBus.emit('streamer:viewerDisconnected', { peerId: conn.peer });
+  const replacement = { ...conn, send: vi.fn() };
+  plugin.broadcastTo(replacement); const current = plugin.outgoing.get(conn.peer);
+  ipc.create.mockResolvedValue({ sdp: 'new-answer' });
+  await plugin.answer({ ...current, sdp: 'new-offer' }, replacement);
+  finish({ sdp: 'old-answer' }); await pending;
+  expect(plugin.outgoing.get(conn.peer)).toBe(current);
+  expect(ipc.close).toHaveBeenCalledWith('capture-a', 'guest', old.negotiationId);
+  expect(ipc.close).not.toHaveBeenCalledWith('capture-a', 'guest', current.negotiationId);
+  expect(replacement.send).toHaveBeenCalledWith(expect.objectContaining({ type: 'DIRECT_STREAM_ANSWER', ...current, sdp: 'new-answer' }));
+  await session.disposeAsync();
 });

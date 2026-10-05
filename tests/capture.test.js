@@ -62,6 +62,20 @@ describe('Abstração de captura browser/native', () => {
     expect(invoke).toHaveBeenNthCalledWith(2, 'stop_native_capture', { sessionId: 'native-1' });
   });
 
+  it('encaminha DXGI separado de D3D12 e normaliza o método ativo retornado pelo Rust', async () => {
+    const invoke = vi.fn().mockResolvedValue({ session_id: 'native-dxgi', state: 'live', capture_api: 'dxgi', capture_backend: 'd3d12' });
+    window.__TAURI_INTERNALS__ = { invoke };
+    const provider = new NativeCaptureProvider({ mediaBridge: {
+      createStream: vi.fn().mockResolvedValue(new MockMediaStream([new MockMediaStreamTrack('video')]))
+    } });
+    const result = await provider.start({ sourceId: 'capture_1_monitor_0', sourceType: 'monitor', captureApi: 'dxgi', captureBackend: 'd3d12' });
+    expect(invoke).toHaveBeenCalledWith('start_native_capture', expect.objectContaining({ captureApi: 'dxgi', captureBackend: 'd3d12' }));
+    expect(result.session).toMatchObject({ captureApi: 'dxgi', captureBackend: 'd3d12' });
+    await provider.reconfigure({ bitrateKbps: 5000, captureApi: 'dxgi' });
+    expect(invoke).toHaveBeenCalledWith('reconfigure_native_capture', expect.objectContaining({ captureApi: 'dxgi', bitrateKbps: 5000 }));
+    await provider.stop();
+  });
+
   it('encerra o worker quando a negociação WebRTC falha', async () => {
     const invoke = vi.fn()
       .mockResolvedValueOnce({ sessionId: 'native-failed', state: 'starting' })

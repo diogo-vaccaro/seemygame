@@ -40,10 +40,11 @@ describe('Módulo: voice.js (Chat de Voz P2P Estilo Discord)', () => {
         customStream: mockStream,
       });
 
-      expect(stream).toBe(mockStream);
+      expect(stream).toBe(voice.processedStream);
+      expect(voice.rawLocalStream).toBe(mockStream);
       expect(voice.isInVoice).toBe(true);
       expect(voice.myPeerId).toBe('streamer-1');
-      expect(joinSpy).toHaveBeenCalledWith({ stream: mockStream, peerId: 'streamer-1' });
+      expect(joinSpy).toHaveBeenCalledWith({ stream, peerId: 'streamer-1' });
 
       const participants = voice.getParticipantsList();
       expect(participants).toHaveLength(1);
@@ -218,11 +219,12 @@ describe('Módulo: voice.js (Chat de Voz P2P Estilo Discord)', () => {
       await voice.setAudioInputDevice('mic-novo');
       expect(trackChangeSpy).toHaveBeenCalledWith(
         expect.objectContaining({
-          newTrack,
-          stream: newStream,
+          newTrack: voice.localStream.getAudioTracks()[0],
+          stream: voice.localStream,
           deviceId: 'mic-novo',
         })
       );
+      expect(voice.rawLocalStream).toBe(newStream);
     });
   });
 

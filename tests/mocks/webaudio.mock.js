@@ -74,11 +74,12 @@ export class MockAudioContext {
   }
 
   createMediaStreamDestination() {
+    const track = { kind: 'audio', enabled: true, id: 'mock-processed-track', stop: vi.fn() };
     return {
       stream: {
         id: 'mock-processed-dest-stream',
-        getTracks: () => [{ kind: 'audio', id: 'mock-processed-track', stop: vi.fn() }],
-        getAudioTracks: () => [{ kind: 'audio', id: 'mock-processed-track', stop: vi.fn() }],
+        getTracks: () => [track],
+        getAudioTracks: () => [track],
         getVideoTracks: () => []
       },
       connect: vi.fn(),

@@ -37,8 +37,29 @@ describe('DiscordUIController: Controles de Volume Individual e de Si Mesmo', ()
   });
 
   afterEach(() => {
+    controller.destroy();
+    voiceManager.participants.clear();
     vi.clearAllMocks();
     document.body.innerHTML = '';
+  });
+
+  it('releases obsolete controls across repeated renders and preserves personal settings', () => {
+    const peerId = 'render-regression-peer';
+    voiceManager.participants.set(peerId, { peerId, name: 'Friend', isLocal: false });
+    controller.renderVoiceParticipants(voiceManager.getParticipantsList());
+    const cleanupCount = controller._cleanupFns.length;
+    const obsoleteSlider = document.querySelector('.voice-user-volume-slider');
+    voiceManager.setUserVolume(peerId, 75); voiceManager.setUserMuted(peerId, true);
+    for (let i = 0; i < 200; i++) voiceManager.updateParticipantState(peerId, { isSpeaking: i % 2 === 0 });
+    expect(controller._cleanupFns.length).toBe(cleanupCount);
+    expect(document.querySelector('.voice-user-volume-slider').value).toBe('75');
+    expect(document.querySelector('.voice-user-mute-btn').classList.contains('muted')).toBe(true);
+    obsoleteSlider.value = '180'; obsoleteSlider.dispatchEvent(new Event('input'));
+    expect(voiceManager.getUserVolume(peerId)).toBe(75);
+    const currentSlider = document.querySelector('.voice-user-volume-slider');
+    controller.destroy(); currentSlider.value = '160'; currentSlider.dispatchEvent(new Event('input'));
+    expect(voiceManager.getUserVolume(peerId)).toBe(75);
+    voiceManager.removeRemoteParticipant(peerId);
   });
 
   it('deve inicializar e vincular os sliders de áudio pessoal (mic e saída)', () => {
@@ -111,6 +132,8 @@ describe('DiscordUIController: Controles de Volume Individual e de Si Mesmo', ()
       }
     ];
 
+    for (const participant of participants) voiceManager.participants.set(participant.peerId, participant);
+    voiceManager.userVolumes.set('friend-peer-1', 120);
     controller.renderVoiceParticipants(participants);
 
     const list = document.getElementById('voice-participants-list');
@@ -126,7 +149,7 @@ describe('DiscordUIController: Controles de Volume Individual e de Si Mesmo', ()
     expect(remoteCard.textContent).toContain('Amigo Pro Player');
 
     const slider = remoteCard.querySelector('.voice-user-volume-slider');
-    const muteBtn = remoteCard.querySelector('.voice-user-mute-btn');
+    let muteBtn = remoteCard.querySelector('.voice-user-mute-btn');
     const valBadge = remoteCard.querySelector('.voice-user-volume-val');
 
     expect(slider).not.toBeNull();
@@ -141,11 +164,13 @@ describe('DiscordUIController: Controles de Volume Individual e de Si Mesmo', ()
     expect(valBadge.textContent).toBe('80%');
 
     // Interação com o mute local
+    muteBtn = list.querySelector('.voice-user-mute-btn');
     muteBtn.click();
     expect(voiceManager.isUserLocallyMuted('friend-peer-1')).toBe(true);
     expect(muteBtn.textContent).toBe('🔇');
 
     // Desmuta
+    muteBtn = list.querySelector('.voice-user-mute-btn');
     muteBtn.click();
     expect(voiceManager.isUserLocallyMuted('friend-peer-1')).toBe(false);
     expect(muteBtn.textContent).toBe('🔊');
