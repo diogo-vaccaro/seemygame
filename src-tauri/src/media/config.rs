@@ -150,6 +150,37 @@ impl CaptureBackend {
     }
 }
 
+/// Capture acquisition is independent of the D3D processing backend and encoder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptureApi {
+    Auto,
+    Wgc,
+    Dxgi,
+}
+
+impl CaptureApi {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "auto" => Ok(Self::Auto),
+            "wgc" => Ok(Self::Wgc),
+            "dxgi" => Ok(Self::Dxgi),
+            _ => Err("Método de captura inválido; use auto, wgc ou dxgi".into()),
+        }
+    }
+
+    /// Auto deliberately keeps WGC until monitor DXGI completes E2E validation.
+    pub fn resolve(self, source: &ValidatedSource) -> Result<&'static str, String> {
+        if self == Self::Dxgi && (source.source_type != "monitor" || source.monitor_handle.is_none() || source.hwnd.is_some()) {
+            return Err("DXGI captura somente o monitor inteiro. Para compartilhar uma janela, escolha WGC ou Automático.".into());
+        }
+        Ok(if self == Self::Dxgi { "dxgi" } else { "wgc" })
+    }
+}
+
+pub(crate) fn capture_api_for_source(source: &ValidatedSource, preference: Option<&str>) -> Result<&'static str, String> {
+    CaptureApi::parse(preference.unwrap_or("auto"))?.resolve(source)
+}
+
 /// Applies only to uncompressed video before the encoder. Audio and encoded RTP
 /// must not inherit this dropping policy. Keep the established default until E2E
 /// validation of audio, recovery and replay completes.

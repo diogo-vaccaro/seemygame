@@ -165,6 +165,7 @@ mod tests {
     include!("media/transport_comparison_probe.rs");
     include!("media/frame_journey_probe.rs");
     include!("media/queue_policy_tests.rs");
+    include!("media/capture_api_tests.rs");
 
     #[test]
     fn review_r04_port_lease_excludes_competitor_until_drop() {
@@ -517,7 +518,7 @@ mod tests {
     }
 
     #[test]
-    fn supports_dxgi_for_monitor_and_falls_back_to_wgc_for_window() {
+    fn supports_dxgi_for_monitor_and_rejects_explicit_dxgi_for_window() {
         let monitor_args = build_pipeline(
             &source("monitor"),
             &MediaWorkerConfig {
@@ -530,7 +531,7 @@ mod tests {
         .unwrap();
         assert!(monitor_args.iter().any(|arg| arg == "capture-api=dxgi"));
 
-        let window_args = build_pipeline(
+        let window_error = build_pipeline(
             &source("window"),
             &MediaWorkerConfig {
                 capture_api: Some("dxgi".to_string()),
@@ -539,8 +540,8 @@ mod tests {
             5000,
             None,
         )
-        .unwrap();
-        assert!(window_args.iter().any(|arg| arg == "capture-api=wgc"));
+        .unwrap_err();
+        assert!(window_error.contains("monitor inteiro"));
     }
 
     #[test]

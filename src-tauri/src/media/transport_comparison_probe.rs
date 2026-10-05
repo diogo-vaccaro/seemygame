@@ -199,7 +199,14 @@ mod transport_comparison {
         start: Instant,
     ) -> Result<gst::Pipeline, String> {
         let source = fixture(title);
-        let pipeline=gst::parse::launch(&format!("d3d11screencapturesrc name=observer-source capture-api=wgc window-handle={} do-timestamp=true show-cursor=false ! video/x-raw(memory:D3D11Memory),format=BGRA,framerate=8/1 ! d3d11download ! video/x-raw,format=BGRA ! fakesink name=optics sync=false signal-handoffs=true",source.hwnd.unwrap())).map_err(|e|e.to_string())?.downcast::<gst::Pipeline>().unwrap();
+        let observer_fps = env::var("SMG_COMPARE_OBSERVER_FPS")
+            .unwrap_or_else(|_| "8".into())
+            .parse::<u32>()
+            .map_err(|_| "Invalid observer FPS")?;
+        if ![8, 30, 60].contains(&observer_fps) {
+            return Err("Observer FPS must be 8, 30 or 60".into());
+        }
+        let pipeline=gst::parse::launch(&format!("d3d11screencapturesrc name=observer-source capture-api=wgc window-handle={} do-timestamp=true show-cursor=false ! video/x-raw(memory:D3D11Memory),format=BGRA,framerate={observer_fps}/1 ! d3d11download ! video/x-raw,format=BGRA ! fakesink name=optics sync=false signal-handoffs=true",source.hwnd.unwrap())).map_err(|e|e.to_string())?.downcast::<gst::Pipeline>().unwrap();
         let epochs = Arc::new(Mutex::new(std::collections::BTreeMap::<u64, f64>::new()));
         let rows = epochs.clone();
         pipeline

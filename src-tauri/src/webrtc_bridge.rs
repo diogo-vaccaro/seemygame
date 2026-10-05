@@ -32,6 +32,8 @@ pub struct NativeCaptureBridgeEvent {
     pub session_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub peer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub negotiation_id: Option<String>,
     pub event: String,
     pub mline_index: Option<u32>,
     pub candidate: Option<String>,

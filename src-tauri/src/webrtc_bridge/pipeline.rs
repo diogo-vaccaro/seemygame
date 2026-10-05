@@ -24,6 +24,21 @@ impl NativeWebRtcBridge {
         offer_sdp: Option<&str>,
         ice_servers: Option<&[String]>,
     ) -> Result<Self, String> {
+        Self::new_with_negotiation(app, session_id, peer_id, video_rtp_port,
+            audio_rtp_port, codec, offer_sdp, ice_servers, None)
+    }
+
+    pub fn new_with_negotiation(
+        app: Option<&BridgeAppHandle>,
+        session_id: impl Into<String>,
+        peer_id: Option<String>,
+        video_rtp_port: u16,
+        audio_rtp_port: Option<u16>,
+        codec: VideoCodec,
+        offer_sdp: Option<&str>,
+        ice_servers: Option<&[String]>,
+        negotiation_id: Option<String>,
+    ) -> Result<Self, String> {
         if let Some(offer) = offer_sdp {
             if negotiated_payload_type(offer, "video", codec.encoding_name()).is_none() {
                 return Err(format!("Espectador não oferece {}; reinicie em H.264 ou selecione um codec comum antes de transmitir.", codec.encoding_name()));
@@ -31,7 +46,7 @@ impl NativeWebRtcBridge {
         }
         let session_id = session_id.into();
         #[cfg(test)]
-        let _ = (&app, &session_id, &peer_id);
+        let _ = (&app, &session_id, &peer_id, &negotiation_id);
         let runtime = GStreamerRuntime::discover().ok_or_else(|| {
             "Runtime GStreamer empacotado não encontrado para a ponte WebRTC".to_string()
         })?;
@@ -257,6 +272,7 @@ impl NativeWebRtcBridge {
                         let event = NativeCaptureBridgeEvent {
                             session_id: event_session_id.clone(),
                             peer_id: event_peer_id.clone(),
+                            negotiation_id: negotiation_id.clone(),
                             event: "ice-candidate".to_string(),
                             mline_index,
                             candidate: Some(cand),

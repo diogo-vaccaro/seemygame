@@ -22,11 +22,7 @@ pub(crate) fn build_pipeline(
         return Err("Captura D3D12 experimental requer H.264/NVENC; não há fallback silencioso".into());
     }
     let memory = if d3d12 { "D3D12Memory" } else { "D3D11Memory" };
-    let capture_api = if source.hwnd.is_some() {
-        "wgc"
-    } else {
-        config.capture_api.as_deref().unwrap_or("wgc")
-    };
+    let capture_api = capture_api_for_source(source, config.capture_api.as_deref())?;
     let gop_size = config
         .gop_size
         .unwrap_or_else(|| (config.fps / 2).clamp(15, 30));

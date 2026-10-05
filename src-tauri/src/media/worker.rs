@@ -270,10 +270,11 @@ impl NativeMediaWorker {
         pipeline_config.capture_backend = self.active_capture_backend;
         #[cfg(not(test))]
         crate::system::write_debug_log(&format!(
-            "[Capture] Backend ativo: {}; preferência: {}; fila de vídeo: {}; fallback: {:?}",
+            "[Capture] Backend ativo: {}; preferência: {}; fila de vídeo: {}; fallback: {:?}; método: {}",
             self.active_capture_backend.as_str(), self.config.capture_backend.as_str(),
             self.config.raw_video_queue.as_str(),
             self.capture_fallback_reason,
+            capture_api_for_source(source, self.config.capture_api.as_deref())?,
         ));
         self.child = Some(Self::spawn_child(&self.runtime, source, &pipeline_config,
             self.video_rtp_port, self.audio_rtp_port)?);

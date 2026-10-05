@@ -36,6 +36,7 @@ pub fn get_native_capture_state() -> Result<NativeCaptureState, String> {
             video_codec: None,
             h264_encoder: None,
             capture_backend: None,
+            capture_api: None,
             capture_fallback_reason: None,
             video_rtp_port: None,
             audio_rtp_port: None,
@@ -70,6 +71,7 @@ pub fn start_native_capture(
     video_codec: Option<String>,
     h264_encoder: Option<String>,
     capture_backend: Option<String>,
+    capture_api: Option<String>,
     show_cursor: Option<bool>,
     width: Option<u32>,
     height: Option<u32>,
@@ -117,6 +119,7 @@ pub fn start_native_capture(
         video_codec: None,
         h264_encoder: None,
         capture_backend: None,
+        capture_api: None,
         capture_fallback_reason: None,
         video_rtp_port: None,
         audio_rtp_port: None,
@@ -150,6 +153,7 @@ pub fn start_native_capture(
             local_audio_port: None,
             pending_local_ice_candidates: Vec::new(),
             viewer_bridges: HashMap::new(),
+            viewer_negotiations: ViewerNegotiations::default(),
             pending_viewer_ice_candidates: HashMap::new(),
         });
     }
@@ -167,6 +171,12 @@ pub fn start_native_capture(
     if let Some(backend) = capture_backend.as_deref() {
         config.capture_backend = match media::CaptureBackend::parse(backend) {
             Ok(value) => value,
+            Err(error) => return fail_start(&app, &starting_state, &error),
+        };
+    }
+    if let Some(preference) = capture_api.as_deref() {
+        config.capture_api = match media::capture_api_for_source(&validated, Some(preference)) {
+            Ok(api) => Some(api.to_string()),
             Err(error) => return fail_start(&app, &starting_state, &error),
         };
     }
@@ -220,6 +230,7 @@ pub fn start_native_capture(
         video_codec: Some(worker.config.codec.as_str().to_string()),
         h264_encoder: Some(worker.config.h264_encoder.as_str().to_string()),
         capture_backend: Some(worker.active_capture_backend.as_str().to_string()),
+        capture_api: Some(media::capture_api_for_source(&validated, worker.config.capture_api.as_deref())?.to_string()),
         capture_fallback_reason: worker.capture_fallback_reason.clone(),
         video_rtp_port: Some(worker.video_rtp_port),
         audio_rtp_port: worker.audio_rtp_port,
@@ -287,6 +298,7 @@ pub(crate) fn spawn_worker_health_monitor(app: &AppHandle, session_id: String) {
                                 session.state.state = "error".to_string();
                                 session.state.error = Some(error);
                                 cleanup = Some((
+                                    session.replay.take(),
                                     session.viewer_bridges.drain().collect::<Vec<_>>(),
                                     session.local_bridge.take(),
                                     session.fanout.take(),
@@ -302,6 +314,7 @@ pub(crate) fn spawn_worker_health_monitor(app: &AppHandle, session_id: String) {
                         session.state.error =
                             Some("Worker GStreamer ausente em sessão ativa".to_string());
                         cleanup = Some((
+                            session.replay.take(),
                             session.viewer_bridges.drain().collect::<Vec<_>>(),
                             session.local_bridge.take(),
                             session.fanout.take(),
@@ -362,6 +375,7 @@ pub fn reconfigure_native_capture(
     video_codec: Option<String>,
     h264_encoder: Option<String>,
     capture_backend: Option<String>,
+    capture_api: Option<String>,
     show_cursor: Option<bool>,
     width: Option<u32>,
     height: Option<u32>,
@@ -385,7 +399,15 @@ pub fn reconfigure_native_capture(
     if let Some(value) = capture_backend.as_deref() {
         let requested = media::CaptureBackend::parse(value)?;
         if session.worker.as_ref().is_some_and(|worker| worker.config.capture_backend != requested) {
-            return Err("A troca de API de captura requer reiniciar a transmissão.".to_string());
+            return Err("A troca de API gráfica requer reiniciar a transmissão.".to_string());
+        }
+    }
+
+    if let Some(preference) = capture_api.as_deref() {
+        let requested = media::capture_api_for_source(&session.validated_source, Some(preference))?;
+        let active = media::capture_api_for_source(&session.validated_source, session.worker.as_ref().unwrap().config.capture_api.as_deref())?;
+        if requested != active {
+            return Err("A troca de método de captura requer reiniciar a transmissão.".into());
         }
     }
 
@@ -393,17 +415,16 @@ pub fn reconfigure_native_capture(
     let video_rtp_port = current_worker.video_rtp_port;
     let audio_rtp_port = current_worker.audio_rtp_port;
     let mut new_config = current_worker.config.clone();
+    let mut next_exclude_app = session.state.exclude_app.clone();
 
     if let Some(target) = exclude_app.as_deref() {
         if target.eq_ignore_ascii_case("none") || target.eq_ignore_ascii_case("off") {
             new_config.exclude_process_id = None;
-            session.state.exclude_app = Some("none".to_string());
-            session.state.exclude_pid = None;
+            next_exclude_app = Some("none".to_string());
         } else {
             let pid = crate::windows_list::find_process_id_by_name(target);
             new_config.exclude_process_id = pid;
-            session.state.exclude_app = Some(target.to_string());
-            session.state.exclude_pid = pid;
+            next_exclude_app = Some(target.to_string());
         }
     }
 
@@ -505,6 +526,7 @@ pub fn reconfigure_native_capture(
                     session.state.state = "error".to_string();
                     session.state.error = Some(format!("Falha ao reconfigurar captura nativa: {err}; falha no rollback: {rollback_err}"));
                     let cleanup = (
+                        session.replay.take(),
                         session.viewer_bridges.drain().collect::<Vec<_>>(),
                         session.local_bridge.take(),
                         session.fanout.take(),
@@ -531,10 +553,11 @@ pub fn reconfigure_native_capture(
         video_codec: Some(new_worker.config.codec.as_str().to_string()),
         h264_encoder: Some(new_worker.config.h264_encoder.as_str().to_string()),
         capture_backend: Some(new_worker.active_capture_backend.as_str().to_string()),
+        capture_api: Some(media::capture_api_for_source(&session.validated_source, new_worker.config.capture_api.as_deref())?.to_string()),
         capture_fallback_reason: new_worker.capture_fallback_reason.clone(),
         video_rtp_port: Some(video_rtp_port),
         audio_rtp_port: target_audio_rtp_port,
-        exclude_app: session.state.exclude_app.clone(),
+        exclude_app: next_exclude_app,
         exclude_pid: new_worker.config.exclude_process_id,
         error: None,
     };
@@ -621,6 +644,7 @@ pub fn stop_native_capture(
         video_codec: previous.as_ref().and_then(|s| s.state.video_codec.clone()),
         h264_encoder: previous.as_ref().and_then(|s| s.state.h264_encoder.clone()),
         capture_backend: previous.as_ref().and_then(|s| s.state.capture_backend.clone()),
+        capture_api: previous.as_ref().and_then(|s| s.state.capture_api.clone()),
         capture_fallback_reason: previous.as_ref().and_then(|s| s.state.capture_fallback_reason.clone()),
         video_rtp_port: previous.as_ref().and_then(|s| s.state.video_rtp_port),
         audio_rtp_port: previous.as_ref().and_then(|s| s.state.audio_rtp_port),
@@ -799,13 +823,14 @@ pub fn close_native_capture_peer(session_id: String) -> Result<(), String> {
 }
 
 #[cfg(not(test))]
-#[tauri::command]
+#[tauri::command(async)]
 pub fn create_native_viewer_peer(
     app: AppHandle,
     session_id: String,
     viewer_id: String,
     offer_sdp: String,
     ice_servers: Option<Vec<String>>,
+    negotiation_id: Option<String>,
 ) -> Result<NativeCaptureSdp, String> {
     if offer_sdp.len() > 256 * 1024 {
         return Err("Oferta SDP excede o limite permitido".to_string());
@@ -813,7 +838,10 @@ pub fn create_native_viewer_peer(
     if viewer_id.is_empty() || viewer_id.len() > 128 {
         return Err("Identificador de espectador inválido".to_string());
     }
-    let (codec, audio_rtp_port_exists) = {
+    if negotiation_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 128) {
+        return Err("Identificador de negociação inválido".to_string());
+    }
+    let (codec, audio_rtp_port_exists, ticket) = {
         let mut guard = active_session()
             .lock()
             .map_err(|_| "Estado de captura indisponível".to_string())?;
@@ -827,6 +855,8 @@ pub fn create_native_viewer_peer(
             return Err("A captura nativa ainda não está ativa".to_string());
         }
 
+        let ticket = session.viewer_negotiations.begin(&viewer_id, negotiation_id.clone())?;
+        session.pending_viewer_ice_candidates.retain(|(peer, id), _| peer != &viewer_id || id == &negotiation_id);
         let fanout = session
             .fanout
             .as_ref()
@@ -845,7 +875,7 @@ pub fn create_native_viewer_peer(
             drop(old.bridge);
         }
 
-        (worker.config.codec, worker.audio_rtp_port.is_some())
+        (worker.config.codec, worker.audio_rtp_port.is_some(), ticket)
     };
 
     let viewer_video_port = allocate_ephemeral_port()?;
@@ -857,7 +887,7 @@ pub fn create_native_viewer_peer(
         "[Capture] Criando ponte direta webrtcbin para espectador {viewer_id} (video_port={viewer_video_port}, audio_port={viewer_audio_port:?})"
     ));
 
-    let bridge = NativeWebRtcBridge::new(
+    let bridge = NativeWebRtcBridge::new_with_negotiation(
         Some(&app),
         session_id.clone(),
         Some(viewer_id.clone()),
@@ -866,6 +896,7 @@ pub fn create_native_viewer_peer(
         codec,
         Some(&offer_sdp),
         ice_servers.as_deref(),
+        negotiation_id.clone(),
     )?;
 
     let answer = bridge.create_answer(&offer_sdp)?;
@@ -877,6 +908,10 @@ pub fn create_native_viewer_peer(
         .as_mut()
         .ok_or_else(|| "Nenhuma captura nativa ativa".to_string())?;
 
+    if !session.viewer_negotiations.can_commit(&viewer_id, &ticket, &session_id,
+        session.state.session_id.as_deref(), session.state.state == "live") {
+        return Err("Negociação nativa substituída ou cancelada".to_string());
+    }
     if let Some(fanout) = session.fanout.as_ref() {
         fanout.add_video_target(viewer_video_port);
         if let Some(ap) = viewer_audio_port {
@@ -884,7 +919,7 @@ pub fn create_native_viewer_peer(
         }
     }
 
-    if let Some(pending) = session.pending_viewer_ice_candidates.remove(&viewer_id) {
+    if let Some(pending) = session.pending_viewer_ice_candidates.remove(&(viewer_id.clone(), negotiation_id.clone())) {
         for (mline_index, cand) in pending {
             let _ = bridge.add_ice_candidate(mline_index, &cand);
         }
@@ -909,9 +944,14 @@ pub fn add_native_viewer_ice_candidate(
     viewer_id: String,
     mline_index: u32,
     candidate: String,
+    negotiation_id: Option<String>,
 ) -> Result<(), String> {
     if candidate.len() > 16 * 1024 {
         return Err("Candidato ICE excede o limite permitido".to_string());
+    }
+    if viewer_id.is_empty() || viewer_id.len() > 128 ||
+        negotiation_id.as_ref().is_some_and(|id| id.is_empty() || id.len() > 128) {
+        return Err("Identificador de negociação inválido".to_string());
     }
     let mut guard = active_session()
         .lock()
@@ -924,14 +964,16 @@ pub fn add_native_viewer_ice_candidate(
     }
     let expanded = crate::webrtc_bridge::expand_local_candidates(&candidate);
     for cand in expanded {
-        if let Some(entry) = session.viewer_bridges.get(&viewer_id) {
+        if let Some(entry) = session.viewer_bridges.get(&viewer_id)
+            .filter(|_| session.viewer_negotiations.matches(&viewer_id, &negotiation_id)) {
             let _ = entry.bridge.add_ice_candidate(mline_index, &cand);
         } else {
-            session
-                .pending_viewer_ice_candidates
-                .entry(viewer_id.clone())
-                .or_default()
-                .push((mline_index, cand));
+            let key = (viewer_id.clone(), negotiation_id.clone());
+            if session.pending_viewer_ice_candidates.len() >= 128 && !session.pending_viewer_ice_candidates.contains_key(&key) {
+                return Err("Limite de negociações ICE pendentes excedido".to_string());
+            }
+            let pending = session.pending_viewer_ice_candidates.entry(key).or_default();
+            if pending.len() < 256 { pending.push((mline_index, cand)); }
         }
     }
     Ok(())
@@ -939,7 +981,7 @@ pub fn add_native_viewer_ice_candidate(
 
 #[cfg(not(test))]
 #[tauri::command]
-pub fn close_native_viewer_peer(session_id: String, viewer_id: String) -> Result<(), String> {
+pub fn close_native_viewer_peer(session_id: String, viewer_id: String, negotiation_id: Option<String>) -> Result<(), String> {
     let mut guard = active_session()
         .lock()
         .map_err(|_| "Estado de captura indisponível".to_string())?;
@@ -949,6 +991,8 @@ pub fn close_native_viewer_peer(session_id: String, viewer_id: String) -> Result
     if session.state.session_id.as_deref() != Some(session_id.as_str()) {
         return Err("Sessão de captura nativa inválida".to_string());
     }
+    session.pending_viewer_ice_candidates.remove(&(viewer_id.clone(), negotiation_id.clone()));
+    if !session.viewer_negotiations.cancel(&viewer_id, &negotiation_id) { return Ok(()); }
     if let Some(entry) = session.viewer_bridges.remove(&viewer_id) {
         if let Some(fanout) = session.fanout.as_ref() {
             fanout.remove_video_target(entry.video_port);
@@ -958,7 +1002,6 @@ pub fn close_native_viewer_peer(session_id: String, viewer_id: String) -> Result
         }
         drop(entry.bridge);
     }
-    session.pending_viewer_ice_candidates.remove(&viewer_id);
     Ok(())
 }
 

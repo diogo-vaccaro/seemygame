@@ -17,6 +17,7 @@ mod system;
 mod webrtc_bridge;
 mod webrtc_common;
 mod windows_list;
+mod window_lifecycle;
 
 #[cfg(not(test))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -56,19 +57,16 @@ pub fn run() {
         .on_window_event(|window, event| {
             log::info!("[SeeMyGame Desktop] WindowEvent ({:?}): {:?}", window.label(), event);
             match event {
-                tauri::WindowEvent::Destroyed => {
-                    log::info!("[SeeMyGame Desktop] Janela destruída, encerrando captura e controles virtuais...");
-                    if let Err(error) = capture::stop_native_capture(window.app_handle().clone(), None) {
-                        log::warn!("[SeeMyGame Desktop] Falha ao encerrar captura nativa: {error}");
-                    }
-                    let _ = gamepad::unplug_all_virtual_gamepads();
-                }
-                tauri::WindowEvent::CloseRequested { .. } => {
-                    log::info!("[SeeMyGame Desktop] Fechamento solicitado, garantindo encerramento limpo de processos...");
-                    if let Err(error) = capture::stop_native_capture(window.app_handle().clone(), None) {
-                        log::warn!("[SeeMyGame Desktop] Falha ao encerrar captura nativa: {error}");
-                    }
-                    let _ = gamepad::unplug_all_virtual_gamepads();
+                tauri::WindowEvent::Destroyed | tauri::WindowEvent::CloseRequested { .. } => {
+                    window_lifecycle::close_window_resources(window.label(), || {
+                        if let Err(error) = capture::stop_native_capture(window.app_handle().clone(), None) {
+                            log::warn!("[SeeMyGame Desktop] Falha ao encerrar captura nativa: {error}");
+                        }
+                    }, || { let _ = gamepad::unplug_all_virtual_gamepads(); }, || {
+                        if let Err(error) = native_viewer::release_native_viewer() {
+                            log::warn!("[SeeMyGame Desktop] Falha ao encerrar player nativo: {error}");
+                        }
+                    });
                 }
                 _ => {}
             }

@@ -13,7 +13,8 @@ pub(crate) struct ActiveSession {
     pub(crate) local_audio_port: Option<u16>,
     pub(crate) pending_local_ice_candidates: Vec<(u32, String)>,
     pub(crate) viewer_bridges: HashMap<String, ViewerBridgeEntry>,
-    pub(crate) pending_viewer_ice_candidates: HashMap<String, Vec<(u32, String)>>,
+    pub(crate) viewer_negotiations: ViewerNegotiations,
+    pub(crate) pending_viewer_ice_candidates: HashMap<(String, Option<String>), Vec<(u32, String)>>,
 }
 
 #[cfg(not(test))]

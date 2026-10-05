@@ -96,6 +96,7 @@ pub struct NativeCaptureState {
     pub video_codec: Option<String>,
     pub h264_encoder: Option<String>,
     pub capture_backend: Option<String>,
+    pub capture_api: Option<String>,
     pub capture_fallback_reason: Option<String>,
     pub video_rtp_port: Option<u16>,
     pub audio_rtp_port: Option<u16>,
@@ -116,6 +117,8 @@ pub(crate) use fanout::*;
 
 mod session;
 pub(crate) use session::*;
+mod negotiation;
+pub(crate) use negotiation::ViewerNegotiations;
 
 pub fn capabilities() -> CaptureCapabilities {
     let media = media::probe_capabilities();
