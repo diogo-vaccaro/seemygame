@@ -1,3 +1,4 @@
+import { bindTacticalPingInput } from '../ping-input.js';
 /** gamer-features: commands receive explicit compatibility ports; no page initialization. */
 export async function toggleFacecam(compatibilityContext) {
   if (compatibilityContext.isTogglingFacecam) return;
@@ -56,137 +57,21 @@ export async function toggleFacecam(compatibilityContext) {
 export function initTacticalPing(compatibilityContext) {
   const canvas = document.getElementById('ping-canvas');
   if (!canvas) return;
-
-  compatibilityContext.tacticalPingManager.setCanvas(canvas);
-
-  if (compatibilityContext.tacticalPingAbortController) {
-    compatibilityContext.tacticalPingAbortController.abort();
-  }
+  compatibilityContext.tacticalPingAbortController?.abort();
   compatibilityContext.tacticalPingAbortController = new AbortController();
-  const { signal } = compatibilityContext.tacticalPingAbortController;
-
-  const resize = () => {
-    const parent = canvas.parentElement;
-    if (parent) {
-      const w = parent.clientWidth || 1280;
-      const h = parent.clientHeight || 720;
-      if (canvas.width !== w || canvas.height !== h) {
-        canvas.width = w;
-        canvas.height = h;
-      }
-    }
-  };
-  resize();
-  window.addEventListener('resize', resize, { signal });
-  if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
-    const ro = new ResizeObserver(resize);
-    ro.observe(canvas.parentElement);
-    signal.addEventListener('abort', () => ro.disconnect());
-  }
-
-  let currentPingMode = 'ping';
-  const pingModeBtn = document.getElementById('ping-mode-btn');
-  const dangerModeBtn = document.getElementById('danger-mode-btn');
-  const laserModeBtn = document.getElementById('laser-mode-btn');
-
-  const updateModeButtons = (mode) => {
-    currentPingMode = mode;
-    if (pingModeBtn) pingModeBtn.classList.toggle('active', mode === 'ping');
-    if (dangerModeBtn) dangerModeBtn.classList.toggle('active', mode === 'danger');
-    if (laserModeBtn) laserModeBtn.classList.toggle('active', mode === 'laser');
-    if (canvas) {
-      canvas.style.cursor = 'crosshair';
-    }
-  };
-
-  if (pingModeBtn) {
-    pingModeBtn.addEventListener('click', () => updateModeButtons('ping'), { signal });
-  }
-  if (dangerModeBtn) {
-    dangerModeBtn.addEventListener('click', () => updateModeButtons('danger'), { signal });
-  }
-  if (laserModeBtn) {
-    laserModeBtn.addEventListener('click', () => updateModeButtons('laser'), { signal });
-  }
-
-  let isPointerDown = false;
-
-  canvas.addEventListener('pointerdown', (e) => {
-    if (compatibilityContext.getCoopState().isPlayer2) return;
-
-    if (typeof document !== 'undefined') {
-      const clickedEl = document.elementFromPoint ? document.elementFromPoint(e.clientX, e.clientY) : null;
-      if (clickedEl && (
-        clickedEl.closest('.video-card-header') ||
-        clickedEl.closest('.card-controls') ||
-        clickedEl.closest('.card-btn') ||
-        clickedEl.closest('.reactions-dock') ||
-        clickedEl.closest('.bottom-control-dock') ||
-        clickedEl.closest('.facecam-overlay') ||
-        clickedEl.closest('.audio-unmute-overlay') ||
-        clickedEl.closest('button') ||
-        clickedEl.closest('header') ||
-        clickedEl.closest('nav') ||
-        clickedEl.closest('aside')
-      )) {
-        return;
-      }
-    }
-
-    isPointerDown = true;
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / (rect.height || 1)));
-
-    const isHost = !window.location.pathname.endsWith('viewer.html');
-    const coopState = compatibilityContext.getCoopState();
-    const senderName = compatibilityContext.isRoomMode() && compatibilityContext.roomManager?.userName
+  bindTacticalPingInput(canvas, {
+    manager: compatibilityContext.tacticalPingManager,
+    signal: compatibilityContext.tacticalPingAbortController.signal,
+    broadcast: data => compatibilityContext.broadcastDataMessage(data),
+    getPeerId: () => compatibilityContext.myId,
+    getRole: () => window.location.pathname.endsWith('viewer.html') ? 'viewer' : 'host',
+    getDisplayName: () => compatibilityContext.isRoomMode() && compatibilityContext.roomManager?.userName
       ? compatibilityContext.roomManager.userName
-      : (isHost ? 'Streamer' : (coopState.isPlayer2 ? 'Player 2' : (compatibilityContext.myId ? `Amigo ${compatibilityContext.myId.slice(0, 4)}` : 'Espectador')));
-
-    const isLaser = currentPingMode === 'laser' || e.shiftKey || e.button === 2;
-
-    if (isLaser) {
-      const color = isHost ? '#10b981' : '#00ffff';
-      compatibilityContext.tacticalPingManager.startLaserTrail({ color });
-      compatibilityContext.tacticalPingManager.addLaserPoint({ x, y, color });
-      const senderId = compatibilityContext.myId || 'local';
-      compatibilityContext.broadcastDataMessage({ type: 'TACTICAL_LASER', senderId, point: { x, y, color } });
-    } else {
-      const ping = { x, y, type: currentPingMode, senderName };
-      compatibilityContext.tacticalPingManager.addPing(ping);
-      compatibilityContext.broadcastDataMessage({ type: 'TACTICAL_PING', ping });
-    }
-  }, { signal });
-
-  canvas.addEventListener('pointermove', (e) => {
-    if (!isPointerDown) return;
-    const rect = canvas.getBoundingClientRect();
-    const x = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-    const y = Math.max(0, Math.min(1, (e.clientY - rect.top) / (rect.height || 1)));
-
-    if (compatibilityContext.tacticalPingManager.isDrawingLaser) {
-      const isHost = !window.location.pathname.endsWith('viewer.html');
-      const color = isHost ? '#10b981' : '#00ffff';
-      compatibilityContext.tacticalPingManager.addLaserPoint({ x, y, color });
-      const senderId = compatibilityContext.myId || 'local';
-      compatibilityContext.broadcastDataMessage({ type: 'TACTICAL_LASER', senderId, point: { x, y, color } });
-    }
-  }, { signal });
-
-  const stopDrawing = () => {
-    if (isPointerDown) {
-      isPointerDown = false;
-      if (compatibilityContext.tacticalPingManager.isDrawingLaser) {
-        compatibilityContext.tacticalPingManager.stopLaserTrail('local');
-        compatibilityContext.broadcastDataMessage({ type: 'TACTICAL_LASER', action: 'stop', senderId: compatibilityContext.myId || 'local' });
-      }
-    }
-  };
-
-  canvas.addEventListener('pointerup', stopDrawing, { signal });
-  canvas.addEventListener('pointercancel', stopDrawing, { signal });
-  canvas.addEventListener('contextmenu', (e) => e.preventDefault(), { signal });
+      : (window.location.pathname.endsWith('viewer.html')
+        ? (compatibilityContext.myId ? `Amigo ${compatibilityContext.myId.slice(0, 4)}` : 'Espectador')
+        : 'Streamer'),
+    canDraw: () => !compatibilityContext.getCoopState().isPlayer2
+  });
 }
 
 export function initFloatingReactions(compatibilityContext) {

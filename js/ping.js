@@ -127,7 +127,12 @@ export class TacticalPingManager {
     }
     const safeSender = String(senderId || 'local');
     const safeColor = typeof color === 'string' && /^#[0-9a-f]{3,8}$/i.test(color) ? color : '#10b981';
-    if (this.laserTrails.length >= this.maxLaserTrails) this.laserTrails.shift();
+    if (this.laserTrails.length >= this.maxLaserTrails) {
+      const removed = this.laserTrails.shift();
+      if (this.activeLaserTrails.get(removed.senderId) === removed) {
+        this.activeLaserTrails.delete(removed.senderId);
+      }
+    }
     if (safeSender === 'local') {
       this.isDrawingLaser = true;
     }
@@ -159,7 +164,7 @@ export class TacticalPingManager {
       trail = this.startLaserTrail({ senderId: safeSender, color: safeColor });
     }
 
-    if (trail.points.length >= this.maxLaserPoints) return;
+    if (trail.points.length >= this.maxLaserPoints) trail.points.shift();
 
     trail.points.push({
       x: clampedX,
@@ -238,11 +243,22 @@ export class TacticalPingManager {
     this.laserTrails = this.laserTrails.filter(trail => {
       // Remove pontos antigos
       trail.points = trail.points.filter(p => now - p.time < trail.maxAge);
-      if (trail.points.length < 2) return trail.points.length > 0;
+      const active = this.activeLaserTrails.get(trail.senderId) === trail;
+      if (trail.points.length === 0) return active;
 
       this.ctx.save();
       this.ctx.lineCap = 'round';
       this.ctx.lineJoin = 'round';
+
+      // A stationary pointer (or the first point) must be visible too.
+      const tip = trail.points[trail.points.length - 1];
+      this.ctx.beginPath();
+      this.ctx.arc(tip.x * width, tip.y * height, 3, 0, Math.PI * 2);
+      this.ctx.fillStyle = trail.color;
+      this.ctx.globalAlpha = Math.max(0, 1 - (now - tip.time) / trail.maxAge);
+      this.ctx.shadowColor = trail.color;
+      this.ctx.shadowBlur = 8;
+      this.ctx.fill();
 
       for (let i = 1; i < trail.points.length; i++) {
         const p1 = trail.points[i - 1];

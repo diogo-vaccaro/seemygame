@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TacticalPingManager } from '../js/ping.js';
 
 describe('Módulo: ping.js (TacticalPingManager)', () => {
@@ -28,6 +28,48 @@ describe('Módulo: ping.js (TacticalPingManager)', () => {
 
     manager = new TacticalPingManager();
     manager.setCanvas(mockCanvas);
+  });
+
+  afterEach(() => manager.dispose());
+
+  it('keeps an empty active trail renderable when drawing starts between frames', () => {
+    manager.startLaserTrail();
+    manager.render();
+    manager.addLaserPoint({ x: .1, y: .2 });
+    manager.render();
+    expect(manager.laserTrails).toHaveLength(1);
+    expect(mockCtx.arc).toHaveBeenCalledWith(128, 144, 3, 0, Math.PI * 2);
+    expect(mockCtx.fill).toHaveBeenCalled();
+  });
+
+  it('resumes drawing after all previous points expire and removes a stopped empty trail', () => {
+    manager.addLaserPoint({ x: .1, y: .2 });
+    manager.currentLaserTrail.points[0].time = Date.now() - 3000;
+    manager.render();
+    manager.addLaserPoint({ x: .3, y: .4 });
+    manager.render();
+    expect(manager.laserTrails).toHaveLength(1);
+    expect(mockCtx.arc).toHaveBeenLastCalledWith(384, 288, 3, 0, Math.PI * 2);
+    manager.stopLaserTrail();
+    manager.laserTrails[0].points[0].time = Date.now() - 3000;
+    manager.render();
+    expect(manager.laserTrails).toHaveLength(0);
+  });
+
+  it('continues a long stroke beyond the point limit', () => {
+    manager.maxLaserPoints = 2;
+    for (const x of [.1, .2, .3]) manager.addLaserPoint({ x, y: .5 });
+    expect(manager.currentLaserTrail.points.map(p => p.x)).toEqual([.2, .3]);
+  });
+
+  it('recreates a visible trail after its previous trail was evicted', () => {
+    manager.maxLaserTrails = 1;
+    manager.addLaserPoint({ senderId: 'alice', x: .1, y: .2 });
+    manager.addLaserPoint({ senderId: 'bob', x: .3, y: .4 });
+    expect(manager.activeLaserTrails.has('alice')).toBe(false);
+    manager.addLaserPoint({ senderId: 'alice', x: .5, y: .6 });
+    expect(manager.laserTrails[0].senderId).toBe('alice');
+    expect(manager.laserTrails[0].points[0].x).toBe(.5);
   });
 
   it('deve adicionar um ping tático com coordenadas clampadas entre 0 e 1', () => {

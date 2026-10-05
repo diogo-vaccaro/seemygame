@@ -7,6 +7,7 @@
 
 import { BasePlugin } from './base-plugin.js';
 import { tacticalPingManager } from '../ping.js';
+import { bindTacticalPingInput } from '../ping-input.js';
 
 export class TacticalPingPlugin extends BasePlugin {
   constructor(options = {}) {
@@ -74,7 +75,6 @@ export class TacticalPingPlugin extends BasePlugin {
    */
   bindCanvas(canvas) {
     if (!canvas) return;
-    this.manager.setCanvas(canvas);
 
     if (this._abortController) {
       this._abortController.abort();
@@ -82,25 +82,15 @@ export class TacticalPingPlugin extends BasePlugin {
     this._abortController = new AbortController();
     const { signal } = this._abortController;
 
-    const resize = () => {
-      const parent = canvas.parentElement;
-      if (parent) {
-        const w = parent.clientWidth || 1280;
-        const h = parent.clientHeight || 720;
-        if (canvas.width !== w || canvas.height !== h) {
-          canvas.width = w;
-          canvas.height = h;
-        }
-      }
-    };
-    resize();
-
-    window.addEventListener('resize', resize, { signal });
-    if (typeof ResizeObserver !== 'undefined' && canvas.parentElement) {
-      const ro = new ResizeObserver(resize);
-      ro.observe(canvas.parentElement);
-      signal.addEventListener('abort', () => ro.disconnect());
-    }
+    bindTacticalPingInput(canvas, {
+      manager: this.manager,
+      signal,
+      broadcast: data => this.context?.broadcastDataMessage?.(data),
+      getPeerId: () => this.context?.getPeerId?.(),
+      getDisplayName: () => this.context?.getDisplayName?.(),
+      getRole: () => this.context?.getRole?.(),
+      canDraw: () => this.context?.canUseTacticalPing?.() !== false
+    });
   }
 
   destroy() {

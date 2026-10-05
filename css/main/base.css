@@ -18,6 +18,11 @@
   height: 100vh;
   max-height: 100vh;
   overflow: hidden;
+}/* Keep the Studio stage usable when the settings fill a short window. */body.streamer-page:not(.has-expanded-video) {
+  overflow-y: auto;
+}body.streamer-page > .video-grid {
+  min-height: 280px;
+  flex-shrink: 0;
 }body.has-expanded-video {
   height: auto;
   min-height: 100vh;
