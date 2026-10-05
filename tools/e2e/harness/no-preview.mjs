@@ -8,6 +8,7 @@ export async function installNativeWithoutPreview() {
  NativeCaptureProvider.prototype.start=async function(options={}) {
   const operationId=++this._operationId;
   this.requestedSettings={...options};
+  if(window.__smgTestStreamProfile)window.__smgTestStreamProfile.nativeRequested={...options};
   const state=await startNativeCapture(options);
   if(operationId!==this._operationId){await stopNativeCapture(state.sessionId);throw new Error('Diagnostic capture cancelled');}
   const canvas=document.createElement('canvas');canvas.width=320;canvas.height=180;

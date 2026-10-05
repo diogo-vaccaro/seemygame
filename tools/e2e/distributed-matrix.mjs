@@ -35,6 +35,10 @@ const encoderOverride=option('--encoder',null);
 if(!['h264','hevc','av1'].includes(codec)||encoderOverride!==null&&!['auto','nvenc','mf','cpu'].includes(encoderOverride))throw new Error('Invalid codec or encoder');
 if(senders.includes('native-d3d12')&&(codec!=='h264'||encoderOverride!==null&&encoderOverride!=='nvenc'))throw new Error('Forced D3D12 requires H264/NVENC');
 const bitrateKbps=option('--bitrate-kbps',null);
+// Forward independent source/stream controls and bounded load to the existing E2E.
+const studyFlags=['--stream-fps','--web-capture-fps','--source-fps','--source-size','--source-workload','--workload-scene','--workload-iterations','--workload-passes','--workload-workers'];
+const studyArgs=studyFlags.flatMap(flag=>args.includes(flag)?[flag,option(flag)]:[]);
+if(args.includes('--web-scale-in-encoder'))studyArgs.push('--web-scale-in-encoder');
 if(bitrateKbps!==null&&(!Number.isInteger(Number(bitrateKbps))||Number(bitrateKbps)<256||Number(bitrateKbps)>50000))throw new Error('Invalid bitrate budget');
 const validPreset=preset=>Object.hasOwn(QUALITY_PROFILES,preset);
 if(cases.some(c=>{const parts=c.split(':');return parts.length!==3||!['native','native-auto','native-d3d12','web'].includes(parts[0])||!['chrome','tauri'].includes(parts[1])||!validPreset(parts[2]);}))throw new Error('Invalid matrix cases (sender:receiver:preset)');
@@ -46,6 +50,7 @@ const report={id,status:'running',scope:'two machines, interactive notebook rece
 report.receiverBrowserConfig=receiverBrowserConfig;report.traceSeconds=traceSeconds;report.keepDisplayAwake=keepDisplayAwake;
 report.receiverExecutable=remoteExe;
 report.receiverViewport=receiverViewport;
+report.studyControls=Object.fromEntries(studyFlags.filter(flag=>args.includes(flag)).map(flag=>[flag.slice(2),option(flag)]));
 for(const file of ['tools/e2e/distributed-matrix.mjs','tools/e2e/viewer-task.ps1','tools/e2e/viewer-agent.mjs','tools/e2e/harness/remote-viewer.mjs'])report.helperHashes[file]=createHash('sha256').update(await readFile(path.join(root,file))).digest('hex');
 const delay=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const shellQuote=s=>"'"+s.replaceAll("'","''")+"'";
@@ -79,7 +84,7 @@ try {
    console.log(`Matrix case ${sender} -> ${receiver}, ${preset}, ${seconds} intervals`);
    const backend=sender==='native-d3d12'?'d3d12':sender==='native-auto'?'auto':'d3d11';
    const selectedEncoder=encoderOverride??(sender==='native-d3d12'||sender==='native'&&codec==='h264'?'nvenc':'auto');
-   active=spawn(process.execPath,['tools/e2e/run.mjs','--sender',sender==='web'?'web':'native','--capture-backend',backend,...(sender==='web'?[]:['--encoder',selectedEncoder]),...(nativeWithoutPreview&&sender!=='web'?[ '--native-without-preview']:[]),...(experimentalHevcReceive?['--enable-hevc-receive']:[]),...(exerciseCaptureFallback&&sender!=='web'?[ '--exercise-capture-fallback']:[]),...(matchedResolution?['--matched-resolution']:[]),...(matchedCodec?['--matched-codec']:[]),...(bitrateKbps===null?[]:['--bitrate-kbps',bitrateKbps]),...(calibrateClocks?['--calibrate-clocks','--clock-max-error-ms',clockMaxErrorMs]:[]),'--optical-hz',opticalHz,'--optical-reader',opticalReaderMode,'--receiver-trace-seconds',String(traceSeconds),'--receiver-trace-trigger-ms',String(traceTriggerMs),...(traceSender?['--trace-sender']:[]),...(frameEvidence?['--receiver-frame-evidence']:[]),...(receiverViewport?['--receiver-viewport',receiverViewport]:[]),'--exe',senderExe,'--channel','chrome','--preset',preset,'--codec',codec,'--seconds',String(seconds),'--viewer-endpoint',ready.controlEndpoint,'--viewer-ssh-host',host,'--source-position','30,30'],{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe']});
+   active=spawn(process.execPath,['tools/e2e/run.mjs',...studyArgs,'--sender',sender==='web'?'web':'native','--capture-backend',backend,...(sender==='web'?[]:['--encoder',selectedEncoder]),...(nativeWithoutPreview&&sender!=='web'?[ '--native-without-preview']:[]),...(experimentalHevcReceive?['--enable-hevc-receive']:[]),...(exerciseCaptureFallback&&sender!=='web'?[ '--exercise-capture-fallback']:[]),...(matchedResolution?['--matched-resolution']:[]),...(matchedCodec?['--matched-codec']:[]),...(bitrateKbps===null?[]:['--bitrate-kbps',bitrateKbps]),...(calibrateClocks?['--calibrate-clocks','--clock-max-error-ms',clockMaxErrorMs]:[]),'--optical-hz',opticalHz,'--optical-reader',opticalReaderMode,'--receiver-trace-seconds',String(traceSeconds),'--receiver-trace-trigger-ms',String(traceTriggerMs),...(traceSender?['--trace-sender']:[]),...(frameEvidence?['--receiver-frame-evidence']:[]),...(receiverViewport?['--receiver-viewport',receiverViewport]:[]),'--exe',senderExe,'--channel','chrome','--preset',preset,'--codec',codec,'--seconds',String(seconds),'--viewer-endpoint',ready.controlEndpoint,'--viewer-ssh-host',host,'--source-position','30,30'],{cwd:root,windowsHide:true,stdio:['ignore','pipe','pipe']});
    let log='';const onData=d=>{const s=d.toString();log+=s;process.stdout.write(redact(s));};active.stdout.on('data',onData);active.stderr.on('data',onData);
    const exited=waitExit(active);let timer;
    const code=await Promise.race([exited,new Promise((_,reject)=>{timer=setTimeout(()=>{active.kill();reject(new Error('Matrix child bounded timeout'));},(seconds+150)*1000);})]).finally(()=>clearTimeout(timer));active=null;

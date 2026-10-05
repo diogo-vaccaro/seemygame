@@ -1,6 +1,14 @@
 import {describe,it,expect} from 'vitest';
 import {classifyStutter} from '../tools/e2e/harness/stutter-cause.mjs';
 describe('Stutter evidence',()=>{
+ it('respects separate stream and source cadence targets at 30 FPS',()=>{
+  const options={targetFps:30,sourceFps:60};
+  const entry={source:{fps:60},nativeStages:{worker:{fps:29.5}},bridge:{decodedFps:29},webInbound:{nackDelta:3}};
+  expect(classifyStutter(entry,true,options).suspectedCause).toBe('RTP_LOSS_OR_RECOVERY');
+  expect(classifyStutter({...entry,nativeStages:{worker:{fps:14}}},true,options).suspectedCause).toBe('NATIVE_WORKER_CADENCE_DROP');
+  expect(classifyStutter({...entry,source:{fps:20}},true,options).suspectedCause).toBe('SOURCE_WINDOW_THROTTLING');
+  expect(classifyStutter({source:{fps:29.5}},false,{targetFps:30,sourceFps:30}).suspectedCause).toBe('UNRESOLVED_PRESENTATION_STALL');
+ });
  it('does not blame the compositor from a callback pause alone',()=>{
   expect(classifyStutter({webInbound:{decodedFps:60},presentation:{intervalMaxPauseMs:500}})).toEqual({suspectedCause:'UNRESOLVED_PRESENTATION_STALL',confidence:'low'});
  });
