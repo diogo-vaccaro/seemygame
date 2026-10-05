@@ -16,9 +16,12 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:e2e:whiteboard": "node tests/e2e-whiteboard.mjs",
+    "test:e2e:whiteboard-tools": "node tests/e2e-whiteboard-didactic.mjs",
+    "test:e2e:whiteboard-math": "node tests/e2e-whiteboard-math.mjs",
     "native:prepare": "node tools/build-dist.js",
     "native:smoke": "cargo check --manifest-path src-tauri/Cargo.toml --locked --offline --lib",
     "build:html": "node tools/build-html.mjs",
+    "vendor:mathjax": "node tools/vendor-mathjax.mjs",
     "check:html": "node tools/build-html.mjs --check",
     "check:modules": "node tools/check-modules.mjs",
     "check:css": "node tools/split-css.mjs",
@@ -59,6 +62,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.11.1",
+    "mathjax": "4.1.3",
     "three": "^0.186.1"
   }
 }
