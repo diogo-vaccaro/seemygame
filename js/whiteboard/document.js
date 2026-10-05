@@ -3,6 +3,12 @@ import { WHITEBOARD_TOOLS, WHITEBOARD_COLORS, CURSOR_PALETTE, getPeerCursorColor
 /** WhiteboardManager: document. State and lifetime remain owned by the composed engine. */
 export const withWhiteboardManagerDocument = Base => class extends Base {
 setTool(toolId) {
+    if (this.textEditing) {
+      const finished = this.finishTextEditing(true);
+      if (finished?.then) { finished.then(ok => { if (ok) this.setTool(toolId); }); return; }
+      if (!finished) return;
+    }
+    this.cancelDrawing?.();
     this.selectedTool = toolId;
     if (toolId === 'hand') {
       this.selectedElementId = null;
@@ -85,7 +91,7 @@ setFill(fillMode) {
     this.currentFill = fillMode;
     if (this.selectedElementId) {
       const el = this.elements.find(e => e.id === this.selectedElementId);
-      if (el && el.type !== 'pencil' && el.type !== 'line' && el.type !== 'text' && el.type !== 'image') {
+      if (el && el.type !== 'pencil' && el.type !== 'line' && el.type !== 'text' && el.type !== 'formula' && el.type !== 'image') {
         el.fill = fillMode;
         this.render();
         if (typeof this.onElementUpdated === 'function') {
@@ -189,6 +195,8 @@ undo() {
   }
 
   clear(broadcast = true) {
+    this.finishTextEditing?.(false);
+    this.cancelDrawing?.();
     if (this.elements.length === 0) return;
     this.saveUndoState();
     this.redoStack = [];

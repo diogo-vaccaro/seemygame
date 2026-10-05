@@ -2,7 +2,10 @@
 import { WHITEBOARD_TOOLS, WHITEBOARD_COLORS, CURSOR_PALETTE, getPeerCursorColor, isTooBrightOrWhite, getContrastTextColor, drawRoundedRect, getFillAlpha, MAX_WHITEBOARD_ELEMENTS, MAX_WHITEBOARD_POINTS, MAX_WHITEBOARD_TEXT_LENGTH, WHITEBOARD_REF_WIDTH, WHITEBOARD_REF_HEIGHT, WHITEBOARD_ELEMENT_TYPES, isFiniteNumber, isSafeWhiteboardElement, processImageFile } from './shared.js';
 /** WhiteboardManager: exporter. State and lifetime remain owned by the composed engine. */
 export const withWhiteboardManagerExporter = Base => class extends Base {
-exportToBlob() {
+async exportToBlob() {
+    if (this.textEditing && !await this.finishTextEditing(true)) throw new Error('Confira a expressão antes de exportar.');
+    await Promise.all(this.elements.map(element => this.prepareMathElement(element)));
+    this.render();
     return new Promise((resolve) => {
       if (!this.canvas) {
         resolve(new Blob([], { type: 'image/png' }));

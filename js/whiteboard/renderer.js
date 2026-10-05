@@ -1,5 +1,6 @@
 
 import { WHITEBOARD_TOOLS, WHITEBOARD_COLORS, CURSOR_PALETTE, getPeerCursorColor, isTooBrightOrWhite, getContrastTextColor, drawRoundedRect, getFillAlpha, MAX_WHITEBOARD_ELEMENTS, MAX_WHITEBOARD_POINTS, MAX_WHITEBOARD_TEXT_LENGTH, WHITEBOARD_REF_WIDTH, WHITEBOARD_REF_HEIGHT, WHITEBOARD_ELEMENT_TYPES, isFiniteNumber, isSafeWhiteboardElement, processImageFile } from './shared.js';
+import { getWhiteboardTextLayout } from './shared.js';
 /** WhiteboardManager: renderer. State and lifetime remain owned by the composed engine. */
 export const withWhiteboardManagerRenderer = Base => class extends Base {
 pruneImageCache() {
@@ -7,6 +8,8 @@ pruneImageCache() {
     for (const [url, image] of this.imageCache) if (!used.has(url)) { image.onload = null; this.imageCache.delete(url); }
   }
 render() {
+    this.pruneMathCache?.();
+    this.positionTextEditor?.();
     if (!this.ctx || !this.canvas) return;
 
     const width = this.canvas.width || WHITEBOARD_REF_WIDTH;
@@ -40,12 +43,21 @@ render() {
 
     // 2. Renderiza todos os elementos consolidados no plano de referência virtual
     for (const el of this.elements) {
+      if (el.id === this.textEditing?.elementId) continue;
       this.drawElement(this.ctx, el);
     }
 
     // 3. Renderiza o elemento atualmente sendo traçado pelo usuário
     if (this.currentElement) {
       this.drawElement(this.ctx, this.currentElement);
+      if (this.lineDraft) {
+        this.ctx.save();
+        this.ctx.fillStyle = this.currentElement.color;
+        for (const point of this.lineDraft.element.points) {
+          this.ctx.beginPath(); this.ctx.arc(point.x, point.y, 4 / zoom, 0, Math.PI * 2); this.ctx.fill();
+        }
+        this.ctx.restore();
+      }
     }
 
     // 4. Renderiza caixa de seleção (bounding box) do elemento selecionado
@@ -144,6 +156,11 @@ drawElement(ctx, el) {
       case 'diamond':
         this.renderDiamond(ctx, el);
         break;
+      case 'triangle':
+      case 'right-triangle':
+      case 'hexagon':
+        this.renderPolygon(ctx, el);
+        break;
       case 'circle':
         this.renderCircle(ctx, el);
         break;
@@ -155,6 +172,9 @@ drawElement(ctx, el) {
         break;
       case 'text':
         this.renderText(ctx, el);
+        break;
+      case 'formula':
+        this.renderFormula(ctx, el);
         break;
       case 'image':
         this.renderImage(ctx, el);
@@ -284,6 +304,12 @@ renderCircle(ctx, el) {
   }
 
 renderLine(ctx, el) {
+    if (Array.isArray(el.points)) {
+      for (let i = 1; i < el.points.length; i++) {
+        this.drawSketchLine(ctx, el.points[i - 1].x, el.points[i - 1].y, el.points[i].x, el.points[i].y, el.rough);
+      }
+      return;
+    }
     this.drawSketchLine(ctx, el.startX, el.startY, el.endX, el.endY, el.rough);
   }
 
@@ -309,20 +335,33 @@ renderArrow(ctx, el) {
     this.drawSketchLine(ctx, x2, y2, px2, py2, el.rough);
   }
 
+renderPolygon(ctx, el) {
+    const x = Math.min(el.startX, el.endX), y = Math.min(el.startY, el.endY);
+    const w = Math.abs(el.endX - el.startX), h = Math.abs(el.endY - el.startY);
+    const points = el.type === 'triangle' ? [[x + w / 2, y], [x + w, y + h], [x, y + h]]
+      : el.type === 'right-triangle' ? [[x, y], [x + w, y + h], [x, y + h]]
+      : [[x + w / 4, y], [x + w * 3 / 4, y], [x + w, y + h / 2], [x + w * 3 / 4, y + h], [x + w / 4, y + h], [x, y + h / 2]];
+    if (el.fill && el.fill !== 'none') {
+      ctx.save(); ctx.fillStyle = el.color; ctx.globalAlpha = getFillAlpha(el.fill);
+      ctx.beginPath(); ctx.moveTo(...points[0]); points.slice(1).forEach(point => ctx.lineTo(...point)); ctx.closePath(); ctx.fill(); ctx.restore();
+    }
+    points.forEach((point, index) => this.drawSketchLine(ctx, ...point, ...points[(index + 1) % points.length], el.rough));
+  }
+
 renderText(ctx, el) {
     ctx.save();
-    ctx.font = 'bold 15px sans-serif';
+    const layout = this.getTextLayout(el, ctx);
+    ctx.font = layout.font;
     ctx.fillStyle = el.color || '#ffffff';
     ctx.textBaseline = 'top';
-
-    // Fundo em pílula estilizada
-    const metrics = ctx.measureText(el.text);
-    const pad = 6;
-    ctx.fillStyle = 'rgba(20, 21, 32, 0.8)';
-    ctx.fillRect(el.x - pad, el.y - pad, metrics.width + pad * 2, 24);
-
-    ctx.fillStyle = el.color || '#ffffff';
-    ctx.fillText(el.text, el.x, el.y);
+    if (layout.rich) for (const run of layout.runs) {
+      if (run.entry?.status === 'ready') ctx.drawImage(run.entry.image, el.x + run.x, el.y + run.y, run.entry.width, run.entry.height);
+      else {
+        ctx.textBaseline = 'alphabetic'; ctx.fillStyle = run.entry?.status === 'error' ? '#f87171' : el.color || '#ffffff';
+        ctx.fillText(run.text, el.x + run.x, el.y + run.y + run.baseline);
+      }
+    }
+    else layout.lines.forEach((line, index) => ctx.fillText(line, el.x, el.y + index * layout.lineHeight));
     ctx.restore();
   }
 

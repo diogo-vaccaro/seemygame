@@ -1,4 +1,4 @@
-import { processImageFile } from './whiteboard.js';
+import { processImageFile, WHITEBOARD_SHAPES } from './whiteboard.js';
 import { sendWhiteboardSnapshot } from './whiteboard/transfer.js';
 
 export function bindWhiteboardUI(manager, {
@@ -22,7 +22,28 @@ export function bindWhiteboardUI(manager, {
   };
   const click = (id, handler) => listen(document.getElementById(id), 'click', handler);
   const setActive = (selector, predicate) => {
-    modal.querySelectorAll(selector).forEach((el) => el.classList.toggle('active', predicate(el)));
+    modal.querySelectorAll(selector).forEach((el) => {
+      const active = predicate(el); el.classList.toggle('active', active);
+      if (el.getAttribute('role') === 'menuitemradio') el.setAttribute('aria-checked', String(active));
+      else el.setAttribute('aria-pressed', String(active));
+    });
+  };
+  const shapesGroup = document.getElementById('wb-shapes-group');
+  const shapesButton = document.getElementById('wb-shapes-btn');
+  const shapesMenu = document.getElementById('wb-shapes-menu');
+  const hint = document.getElementById('wb-tool-hint');
+  const closeShapes = (restoreFocus = false) => {
+    if (shapesMenu) shapesMenu.hidden = true;
+    shapesButton?.setAttribute('aria-expanded', 'false');
+    if (restoreFocus) shapesButton?.focus();
+  };
+  const positionShapes = () => {
+    if (!shapesMenu || shapesMenu.hidden) return;
+    const rect = shapesGroup.getBoundingClientRect();
+    const width = shapesMenu.getBoundingClientRect().width;
+    const left = Math.max(12, Math.min(rect.left, window.innerWidth - width - 12));
+    shapesMenu.style.left = `${left - rect.left}px`;
+    shapesMenu.style.maxHeight = `${Math.max(100, window.innerHeight - rect.bottom - 20)}px`;
   };
   const previous = {
     onElementCreated: manager.onElementCreated,
@@ -71,6 +92,20 @@ export function bindWhiteboardUI(manager, {
   manager.onToolChanged = (toolId) => {
     previous.onToolChanged?.(toolId);
     setActive('.wb-tool-btn', (button) => button.dataset.tool === toolId);
+    const shape = WHITEBOARD_SHAPES.find(item => item.id === toolId);
+    shapesButton?.classList.toggle('active', Boolean(shape));
+    shapesButton?.setAttribute('aria-pressed', String(Boolean(shape)));
+    if (shape) {
+      const icon = shapesButton?.querySelector('.wb-shapes-icon');
+      if (icon) icon.textContent = shape.icon;
+      shapesButton?.setAttribute('title', `Formas: ${shape.name}`);
+    }
+    if (hint) hint.textContent = toolId === 'line'
+      ? 'Arraste para uma linha · Clique para adicionar vértices · Dois cliques ou Enter finalizam · Esc cancela'
+      : toolId === 'formula' ? 'Clique para escrever LaTeX · Símbolos rápidos e prévia · Enter conclui · Esc cancela'
+      : toolId === 'text' ? 'Clique para escrever · Matemática: \\(x^2\\) ou \\[x^2\\] · Enter conclui · Shift+Enter quebra a linha'
+      : 'Dois cliques para escrever ou editar um texto';
+    closeShapes();
   };
   manager.onZoomChanged = (zoom) => {
     previous.onZoomChanged?.(zoom);
@@ -99,6 +134,13 @@ export function bindWhiteboardUI(manager, {
     broadcast({ type: 'WHITEBOARD_REQUEST_SYNC' });
   };
   const close = () => {
+    if (manager.textEditing) {
+      const finished = manager.finishTextEditing(true);
+      if (finished?.then) { finished.then(ok => { if (ok) close(); }); return; }
+      if (!finished) return;
+    }
+    manager.cancelDrawing?.();
+    closeShapes();
     modal.style.display = 'none';
     document.getElementById('toggle-whiteboard-btn')?.classList.remove('active');
     document.getElementById('dock-whiteboard-btn')?.classList.remove('is-active');
@@ -106,11 +148,15 @@ export function bindWhiteboardUI(manager, {
   const toggle = () => modal.style.display === 'flex' ? close() : open();
   click('toggle-whiteboard-btn', toggle);
   ['wb-close-btn', 'wb-back-room-btn', 'wb-floating-close-btn'].forEach((id) => click(id, close));
-  listen(window, 'resize', resizeCanvas);
+  listen(window, 'resize', () => { resizeCanvas(); positionShapes(); });
   listen(window, 'keydown', (event) => {
     if (modal.style.display !== 'flex') return;
-    if (event.key === 'Escape') { close(); return; }
     if (event.target?.matches?.('input,textarea')) return;
+    if (event.key === 'Escape') {
+      if (shapesMenu && !shapesMenu.hidden) { closeShapes(true); event.preventDefault(); return; }
+      if (manager.cancelDrawing?.()) { event.preventDefault(); return; }
+      close(); return;
+    }
     if ((event.ctrlKey || event.metaKey) && ['z', 'Z'].includes(event.key)) {
       event.preventDefault();
       const changed = event.shiftKey ? manager.redo() : manager.undo();
@@ -134,6 +180,7 @@ export function bindWhiteboardUI(manager, {
       else if (key === 'a') manager.setTool('arrow');
       else if (key === 'l') manager.setTool('line');
       else if (key === 't') manager.setTool('text');
+      else if (key === 'm') manager.setTool('formula');
       else if (key === 'e') manager.setTool('eraser');
       else if (key === '+' || key === '=') manager.setZoom((manager.zoom || 1.0) * 1.2);
       else if (key === '-') manager.setZoom((manager.zoom || 1.0) * 0.85);
@@ -146,9 +193,35 @@ export function bindWhiteboardUI(manager, {
 
   modal.querySelectorAll('.wb-tool-btn').forEach((button) => listen(button, 'click', () => {
     const tool = button.dataset.tool;
+    if (!tool) return;
     if (tool === 'image') { document.getElementById('wb-image-input')?.click(); return; }
     manager.setTool(tool);
+    closeShapes();
+    canvas.focus({ preventScroll: true });
   }));
+  click('wb-shapes-btn', () => {
+    if (!shapesMenu) return;
+    const show = shapesMenu.hidden;
+    shapesMenu.hidden = !show;
+    shapesButton.setAttribute('aria-expanded', String(show));
+    if (show) {
+      positionShapes();
+      (shapesMenu.querySelector('[aria-checked="true"]') || shapesMenu.querySelector('button'))?.focus();
+    }
+  });
+  listen(window, 'pointerdown', event => { if (!shapesGroup?.contains(event.target)) closeShapes(); });
+  listen(shapesMenu, 'keydown', event => {
+    const buttons = [...shapesMenu.querySelectorAll('button')];
+    const index = buttons.indexOf(document.activeElement);
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); closeShapes(true); }
+    else if (['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+      event.preventDefault(); event.stopPropagation();
+      const next = event.key === 'Home' ? 0 : event.key === 'End' ? buttons.length - 1
+        : (index + (['ArrowRight', 'ArrowDown'].includes(event.key) ? 1 : -1) + buttons.length) % buttons.length;
+      buttons[next]?.focus();
+    } else if (event.key === 'Tab') closeShapes();
+  });
+  manager.onToolChanged(manager.selectedTool);
   const imageInput = document.getElementById('wb-image-input');
   listen(imageInput, 'change', async (event) => {
     const file = event.target.files?.[0];
@@ -233,6 +306,9 @@ export function bindWhiteboardUI(manager, {
     close,
     toggle,
     destroy() {
+      manager.finishTextEditing?.(false);
+      manager.cancelDrawing?.();
+      closeShapes();
       cleanups.splice(0).forEach((cleanup) => cleanup());
       Object.entries(previous).forEach(([key, callback]) => { manager[key] = callback; });
     }

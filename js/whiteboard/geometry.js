@@ -1,10 +1,11 @@
 
 import { WHITEBOARD_TOOLS, WHITEBOARD_COLORS, CURSOR_PALETTE, getPeerCursorColor, isTooBrightOrWhite, getContrastTextColor, drawRoundedRect, getFillAlpha, MAX_WHITEBOARD_ELEMENTS, MAX_WHITEBOARD_POINTS, MAX_WHITEBOARD_TEXT_LENGTH, WHITEBOARD_REF_WIDTH, WHITEBOARD_REF_HEIGHT, WHITEBOARD_ELEMENT_TYPES, isFiniteNumber, isSafeWhiteboardElement, processImageFile } from './shared.js';
+import { getWhiteboardTextLayout } from './shared.js';
 /** WhiteboardManager: geometry. State and lifetime remain owned by the composed engine. */
 export const withWhiteboardManagerGeometry = Base => class extends Base {
 getElementBounds(el) {
     if (!el) return null;
-    if (el.type === 'pencil' && Array.isArray(el.points) && el.points.length > 0) {
+    if ((el.type === 'pencil' || el.type === 'line') && Array.isArray(el.points) && el.points.length > 0) {
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const pt of el.points) {
         if (pt.x < minX) minX = pt.x;
@@ -14,15 +15,10 @@ getElementBounds(el) {
       }
       return { minX, minY, maxX, maxY, width: Math.max(1, maxX - minX), height: Math.max(1, maxY - minY) };
     }
-    if (el.type === 'text') {
-      const w = el.text ? el.text.length * 10 + 16 : 80;
+    if ((el.type === 'text' || el.type === 'formula')) {
+      const { width, height } = this.getTextLayout(el, this.ctx);
       return {
-        minX: el.x - 6,
-        minY: el.y - 6,
-        maxX: el.x + w,
-        maxY: el.y + 26,
-        width: w + 6,
-        height: 32
+        minX: el.x, minY: el.y, maxX: el.x + width, maxY: el.y + height, width, height
       };
     }
     const minX = Math.min(el.startX, el.endX);
@@ -41,12 +37,12 @@ getElementBounds(el) {
 
 translateElement(el, initial, dx, dy) {
     if (!el || !initial) return;
-    if (el.type === 'pencil' && Array.isArray(initial.points)) {
+    if ((el.type === 'pencil' || el.type === 'line') && Array.isArray(initial.points)) {
       el.points = initial.points.map(p => ({
         x: Math.round((p.x + dx) * 10) / 10,
         y: Math.round((p.y + dy) * 10) / 10
       }));
-    } else if (el.type === 'text') {
+    } else if ((el.type === 'text' || el.type === 'formula')) {
       el.x = Math.round((initial.x + dx) * 10) / 10;
       el.y = Math.round((initial.y + dy) * 10) / 10;
     } else {
@@ -149,17 +145,17 @@ resizeElement(el, initial, handle, dx, dy) {
       el.y = el.startY;
       el.width = Math.round(newW * 10) / 10;
       el.height = Math.round(newH * 10) / 10;
-    } else if (el.type === 'pencil' && Array.isArray(initial.points)) {
+    } else if ((el.type === 'pencil' || el.type === 'line') && Array.isArray(initial.points)) {
       el.points = initial.points.map(p => ({
         x: Math.round((newMinX + (p.x - bounds.minX) * scaleX) * 10) / 10,
         y: Math.round((newMinY + (p.y - bounds.minY) * scaleY) * 10) / 10
       }));
-    } else if (el.type === 'text') {
+    } else if ((el.type === 'text' || el.type === 'formula')) {
       el.x = Math.round(newMinX * 10) / 10;
       el.y = Math.round(newMinY * 10) / 10;
       const fontScale = Math.sqrt(scaleX * scaleY);
       if (fontScale > 1.1 || fontScale < 0.9) {
-        el.strokeWidth = Math.max(1, Math.min(32, Math.round((initial.strokeWidth || 4) * fontScale)));
+        el.fontSize = Math.max(8, Math.min(96, (initial.fontSize || 15) * fontScale));
       }
     } else {
       el.startX = Math.round((newMinX + (initial.startX - bounds.minX) * scaleX) * 10) / 10;

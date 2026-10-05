@@ -4,9 +4,12 @@ export * from './whiteboard/shared.js';
 import { withWhiteboardManagerDocument } from './whiteboard/document.js';
 import { withWhiteboardManagerGeometry } from './whiteboard/geometry.js';
 import { withWhiteboardManagerInput } from './whiteboard/input.js';
+import { withWhiteboardManagerTextEditor } from './whiteboard/text-editor.js';
 import { withWhiteboardManagerRenderer } from './whiteboard/renderer.js';
 import { withWhiteboardManagerExporter } from './whiteboard/exporter.js';
-export class WhiteboardManager extends withWhiteboardManagerExporter(withWhiteboardManagerRenderer(withWhiteboardManagerInput(withWhiteboardManagerGeometry(withWhiteboardManagerDocument(class {}))))) {
+import { withWhiteboardManagerMath } from './whiteboard/math.js';
+import { createMathRenderer } from './whiteboard/math-renderer.js';
+export class WhiteboardManager extends withWhiteboardManagerExporter(withWhiteboardManagerRenderer(withWhiteboardManagerInput(withWhiteboardManagerTextEditor(withWhiteboardManagerMath(withWhiteboardManagerGeometry(withWhiteboardManagerDocument(class {}))))))) {
 constructor(options = {}) {
     super();
     this.canvas = options.canvas || null;
@@ -35,6 +38,9 @@ constructor(options = {}) {
 
     // Cache de imagens decodificadas
     this.imageCache = new Map();
+    this.mathRenderer = options.mathRenderer || createMathRenderer({ onReady: () => {
+      this.render(); this.updateMathPreview?.();
+    } });
 
     // Callbacks de eventos para mensageria P2P
     this.onElementCreated = options.onElementCreated || null;

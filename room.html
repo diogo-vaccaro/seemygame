@@ -775,12 +775,23 @@
         <button class="wb-tool-btn" data-tool="select" title="Mover / Selecionar (V)">👆</button>
         <button class="wb-tool-btn" data-tool="hand" title="Arrastar Tela / Pan (H ou Espaço+Arrastar)">🖐️</button>
         <button class="wb-tool-btn active" data-tool="pencil" title="Caneta Livre (P)">✏️</button>
-        <button class="wb-tool-btn" data-tool="rectangle" title="Retângulo (R)">⬜</button>
-        <button class="wb-tool-btn" data-tool="diamond" title="Losango (D)">💎</button>
-        <button class="wb-tool-btn" data-tool="circle" title="Círculo (C)">⭕</button>
+        <div class="wb-shapes-group" id="wb-shapes-group">
+          <button class="wb-tool-btn wb-shapes-trigger" id="wb-shapes-btn" type="button" title="Formas geométricas" aria-haspopup="menu" aria-expanded="false" aria-controls="wb-shapes-menu">
+            <span class="wb-shapes-icon" aria-hidden="true">△</span> Formas <span aria-hidden="true">▾</span>
+          </button>
+          <div class="wb-shapes-menu" id="wb-shapes-menu" role="menu" aria-label="Formas geométricas" hidden>
+            <button class="wb-tool-btn" data-tool="rectangle" role="menuitemradio" aria-checked="false" title="Retângulo (R)">▭<span>Retângulo</span></button>
+            <button class="wb-tool-btn" data-tool="circle" role="menuitemradio" aria-checked="false" title="Círculo (C)">○<span>Círculo</span></button>
+            <button class="wb-tool-btn" data-tool="triangle" role="menuitemradio" aria-checked="false" title="Triângulo">△<span>Triângulo</span></button>
+            <button class="wb-tool-btn" data-tool="right-triangle" role="menuitemradio" aria-checked="false" title="Triângulo retângulo">◺<span>Triângulo retângulo</span></button>
+            <button class="wb-tool-btn" data-tool="diamond" role="menuitemradio" aria-checked="false" title="Losango (D)">◇<span>Losango</span></button>
+            <button class="wb-tool-btn" data-tool="hexagon" role="menuitemradio" aria-checked="false" title="Hexágono">⬡<span>Hexágono</span></button>
+          </div>
+        </div>
         <button class="wb-tool-btn" data-tool="arrow" title="Flecha (A)">➡️</button>
-        <button class="wb-tool-btn" data-tool="line" title="Linha (L)">📏</button>
-        <button class="wb-tool-btn" data-tool="text" title="Texto (T)">🔤</button>
+        <button class="wb-tool-btn" data-tool="line" title="Linha: arraste ou clique nos vértices; dois cliques finalizam (L)">📏</button>
+        <button class="wb-tool-btn" data-tool="text" title="Escrever no ponto clicado (T ou dois cliques)">🔤</button>
+        <button class="wb-tool-btn" data-tool="formula" title="Fórmula LaTeX (M)" aria-label="Fórmula LaTeX">∑</button>
         <button class="wb-tool-btn" data-tool="image" id="wb-image-btn" title="Inserir Imagem (I ou Ctrl+V)">🖼️</button>
         <button class="wb-tool-btn" data-tool="eraser" title="Borracha (E)">🧼</button>
         <input type="file" id="wb-image-input" accept="image/*" style="display: none;">
@@ -836,7 +847,9 @@
     </div>
 
     <canvas id="whiteboard-canvas" class="whiteboard-canvas"></canvas>
+    <p id="wb-tool-hint" class="wb-tool-hint">Dois cliques para escrever ou editar um texto</p>
   </div>
+
 <!-- smg:end -->
 
   <!-- Modal de Confirmação de Recarga / Saída da Sala -->

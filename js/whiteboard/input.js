@@ -2,21 +2,45 @@
 import { WHITEBOARD_TOOLS, WHITEBOARD_COLORS, CURSOR_PALETTE, getPeerCursorColor, isTooBrightOrWhite, getContrastTextColor, drawRoundedRect, getFillAlpha, MAX_WHITEBOARD_ELEMENTS, MAX_WHITEBOARD_POINTS, MAX_WHITEBOARD_TEXT_LENGTH, WHITEBOARD_REF_WIDTH, WHITEBOARD_REF_HEIGHT, WHITEBOARD_ELEMENT_TYPES, isFiniteNumber, isSafeWhiteboardElement, processImageFile } from './shared.js';
 /** WhiteboardManager: input. State and lifetime remain owned by the composed engine. */
 export const withWhiteboardManagerInput = Base => class extends Base {
+cancelDrawing() {
+    const changed = Boolean(this.currentElement || this.lineDraft || this.isDrawing);
+    this.currentElement = null; this.lineDraft = null; this.isDrawing = false;
+    if (changed) this.render();
+    return changed;
+  }
+
+updateLinePreview(position) {
+    if (!this.lineDraft) return;
+    this.lineDraft.preview = { x: position.x, y: position.y };
+    this.currentElement = { ...this.lineDraft.element, points: [...this.lineDraft.element.points, this.lineDraft.preview] };
+    this.render();
+  }
+
+finishLine() {
+    if (!this.lineDraft) return false;
+    const element = this.lineDraft.element;
+    this.lineDraft = null; this.currentElement = null; this.isDrawing = false;
+    if (element.points.length >= 2) this.addElement(element, true);
+    this.render();
+    return true;
+  }
+
 attachEvents() {
     if (!this.canvas || typeof window === 'undefined') return;
 
     const getCanvasPos = (e) => {
       const rect = this.canvas.getBoundingClientRect();
-      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      const pointer = e.touches?.[0] || e.changedTouches?.[0] || e;
+      const clientX = pointer.clientX;
+      const clientY = pointer.clientY;
       const scaleX = (this.canvas.width || WHITEBOARD_REF_WIDTH) / WHITEBOARD_REF_WIDTH;
       const scaleY = (this.canvas.height || WHITEBOARD_REF_HEIGHT) / WHITEBOARD_REF_HEIGHT;
       const zoom = this.zoom || 1.0;
       const panX = this.panX || 0;
       const panY = this.panY || 0;
 
-      const screenX = clientX - rect.left;
-      const screenY = clientY - rect.top;
+      const screenX = (clientX - rect.left) * (rect.width ? this.canvas.width / rect.width : 1);
+      const screenY = (clientY - rect.top) * (rect.height ? this.canvas.height / rect.height : 1);
 
       const virtX = (screenX - panX) / (scaleX * zoom);
       const virtY = (screenY - panY) / (scaleY * zoom);
@@ -34,12 +58,30 @@ attachEvents() {
     const handlePointerDown = (e) => {
       e.preventDefault();
       const pos = getCanvasPos(e);
+      if (e.button != null && e.button !== 0 && e.button !== 1) return;
+      if (e.detail >= 2) return; // dblclick owns text entry and line completion.
 
       // Pan da tela (Botão do meio do mouse, barra de espaço pressionada ou ferramenta 'hand')
       if (e.button === 1 || this.isSpacePressed || this.selectedTool === 'hand') {
         this.isPanning = true;
         this.panStartPos = { x: e.clientX, y: e.clientY, initialPanX: this.panX || 0, initialPanY: this.panY || 0 };
         if (this.canvas && this.canvas.style) this.canvas.style.cursor = 'grabbing';
+        return;
+      }
+
+      if (this.textEditing) { this.finishTextEditing(true); return; }
+      this.canvas.focus?.({ preventScroll: true });
+      if (this.selectedTool === 'line') {
+        if (!this.lineDraft) {
+          this.lineDraft = { element: {
+            id: 'wb_' + Math.random().toString(36).slice(2, 11), type: 'line', points: [{ x: pos.x, y: pos.y }],
+            color: this.currentColor, strokeWidth: this.currentWidth, rough: this.isRough
+          }, clickMode: false };
+        }
+        this.lineDraft.pointerDown = { x: pos.screenX, y: pos.screenY };
+        this.lineDraft.dragged = false;
+        this.isDrawing = true;
+        this.updateLinePreview(pos);
         return;
       }
 
@@ -87,20 +129,9 @@ attachEvents() {
         return;
       }
 
-      if (this.selectedTool === 'text') {
-        const text = prompt('Digite o texto para a lousa:', 'Nota Tática');
-        if (text && text.trim()) {
-          const el = {
-            id: 'wb_' + Math.random().toString(36).substring(2, 9),
-            type: 'text',
-            x: pos.x,
-            y: pos.y,
-            text: text.trim(),
-            color: this.currentColor,
-            strokeWidth: this.currentWidth
-          };
-          this.addElement(el, true);
-        }
+      if (this.selectedTool === 'text' || this.selectedTool === 'formula') {
+        const target = this.findElementAt(pos.x, pos.y);
+        this.beginTextEditing(pos, ['text', 'formula'].includes(target?.type) ? target : null, this.selectedTool === 'formula');
         return;
       }
 
@@ -195,6 +226,13 @@ attachEvents() {
         return;
       }
 
+      if (this.lineDraft) {
+        const down = this.lineDraft.pointerDown;
+        if (down && Math.hypot(pos.screenX - down.x, pos.screenY - down.y) > 5) this.lineDraft.dragged = true;
+        this.updateLinePreview(pos);
+        return;
+      }
+
       if (!this.isDrawing) return;
 
       if (this.selectedTool === 'eraser') {
@@ -262,7 +300,7 @@ attachEvents() {
         if (el && this.dragInitialState && this._dragUndoSnapshot) {
           const initial = this.dragInitialState;
           const hasMoved = (el.startX !== undefined && initial.startX !== undefined && (Math.abs(el.startX - initial.startX) > 1 || Math.abs(el.startY - initial.startY) > 1)) ||
-            (el.points && initial.points && Math.abs(el.points[0]?.x - initial.points[0]?.x) > 1) ||
+            (el.points && initial.points && (Math.abs(el.points[0]?.x - initial.points[0]?.x) > 1 || Math.abs(el.points[0]?.y - initial.points[0]?.y) > 1)) ||
             (el.x !== undefined && initial.x !== undefined && (Math.abs(el.x - initial.x) > 1 || Math.abs(el.y - initial.y) > 1));
 
           if (hasMoved) {
@@ -281,6 +319,22 @@ attachEvents() {
       }
 
       if (!this.isDrawing) return;
+      if (this.lineDraft) {
+        const draft = this.lineDraft;
+        if (!draft.pointerDown) return;
+        const pos = getCanvasPos(e);
+        const moved = Math.hypot(pos.screenX - draft.pointerDown.x, pos.screenY - draft.pointerDown.y) > 5;
+        const last = draft.element.points.at(-1);
+        if ((draft.clickMode || moved || draft.dragged) && Math.hypot(pos.x - last.x, pos.y - last.y) > 0.1) {
+          if (draft.element.points.length < MAX_WHITEBOARD_POINTS) draft.element.points.push({ x: pos.x, y: pos.y });
+        }
+        draft.pointerDown = null;
+        if (!draft.clickMode && (moved || draft.dragged)) { this.finishLine(); return; }
+        draft.clickMode = true;
+        this.updateLinePreview(pos);
+        if (draft.element.points.length >= MAX_WHITEBOARD_POINTS) this.finishLine();
+        return;
+      }
       this.isDrawing = false;
 
       if (this.currentElement) {
@@ -322,6 +376,9 @@ attachEvents() {
     };
 
     const handleKeyDown = (e) => {
+      if (e.target?.matches?.('input,textarea') || e.target?.isContentEditable) return;
+      if (e.key === 'Enter' && this.lineDraft) { e.preventDefault(); this.finishLine(); return; }
+      if (e.key === 'Escape' && this.lineDraft) { e.preventDefault(); this.cancelDrawing(); return; }
       if (e.code === 'Space' && !this.isSpacePressed) {
         if (e.target?.matches?.('input,textarea')) return;
         this.isSpacePressed = true;
@@ -359,9 +416,25 @@ attachEvents() {
 
     this.canvas.onmousedown = handlePointerDown;
     this.canvas.onmousemove = handlePointerMove;
+    this.canvas.tabIndex = 0;
+    const handleDoubleClick = e => {
+      e.preventDefault();
+      if (this.selectedTool === 'line' && this.lineDraft) { this.finishLine(); return; }
+      if (this.selectedTool === 'line' || this.selectedTool === 'hand' || this.isSpacePressed) return;
+      const pos = getCanvasPos(e), target = this.findElementAt(pos.x, pos.y);
+      this.beginTextEditing(pos, ['text', 'formula'].includes(target?.type) ? target : null);
+    };
+    this.canvas.ondblclick = handleDoubleClick;
     if (typeof window !== 'undefined') window.addEventListener('mouseup', handlePointerUp);
 
-    this.canvas.ontouchstart = handlePointerDown;
+    this.canvas.ontouchstart = e => {
+      const pos = getCanvasPos(e);
+      const previous = this._lastTouchDown;
+      this._lastTouchDown = { x: pos.screenX, y: pos.screenY, time: Date.now() };
+      if (previous && Date.now() - previous.time < 300 && Math.hypot(pos.screenX - previous.x, pos.screenY - previous.y) < 20) {
+        this._lastTouchDown = null; handleDoubleClick(e);
+      } else handlePointerDown(e);
+    };
     this.canvas.ontouchmove = handlePointerMove;
     if (typeof window !== 'undefined') window.addEventListener('touchend', handlePointerUp);
 
@@ -377,6 +450,9 @@ attachEvents() {
   }
 
 dispose() {
+    this.finishTextEditing(false);
+    this.mathRenderer.dispose();
+    this.cancelDrawing();
     if (this._pointerUpHandler && typeof window !== 'undefined') {
       window.removeEventListener('mouseup', this._pointerUpHandler);
       window.removeEventListener('touchend', this._pointerUpHandler);
@@ -395,6 +471,7 @@ dispose() {
     if (this.canvas) {
       this.canvas.onmousedown = null;
       this.canvas.onmousemove = null;
+      this.canvas.ondblclick = null;
       this.canvas.ontouchstart = null;
       this.canvas.ontouchmove = null;
     }
@@ -421,10 +498,19 @@ eraseAt(x, y) {
 
 hitTest(el, x, y, threshold = 24) {
     if (!el) return false;
+    if (el.type === 'line') {
+      const points = el.points || [{ x: el.startX, y: el.startY }, { x: el.endX, y: el.endY }];
+      return points.slice(1).some((end, index) => {
+        const start = points[index], dx = end.x - start.x, dy = end.y - start.y;
+        const length = dx * dx + dy * dy;
+        const t = length ? Math.max(0, Math.min(1, ((x - start.x) * dx + (y - start.y) * dy) / length)) : 0;
+        return Math.hypot(x - start.x - t * dx, y - start.y - t * dy) <= threshold;
+      });
+    }
     if (el.type === 'pencil') {
       return el.points?.some(p => Math.hypot(p.x - x, p.y - y) <= threshold);
     }
-    if (el.type === 'text') {
+    if ((el.type === 'text' || el.type === 'formula')) {
       const bounds = this.getElementBounds(el);
       return x >= bounds.minX - threshold && x <= bounds.maxX + threshold &&
              y >= bounds.minY - threshold && y <= bounds.maxY + threshold;

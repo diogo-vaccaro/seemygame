@@ -305,9 +305,106 @@
   z-index: 10001;
 }
 
+.wb-shapes-group { position: relative; }
+.wb-shapes-trigger { width: auto; gap: 6px; padding: 0 10px; font: 600 12px/1 Arial, sans-serif; }
+.wb-shapes-icon { font-size: 22px; }
+.wb-shapes-menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px;
+  width: 264px;
+  max-width: calc(100vw - 24px);
+  padding: 8px;
+  border: 1px solid var(--surface-tint-hover);
+  border-radius: 12px;
+  background: var(--bg-card);
+  box-shadow: var(--shadow-panel);
+  overflow-y: auto;
+}
+.wb-shapes-menu[hidden] { display: none; }
+.wb-shapes-menu .wb-tool-btn { width: 100%; height: 56px; gap: 4px; flex-direction: column; }
+.wb-shapes-menu .wb-tool-btn span { font: 12px/1.2 Arial, sans-serif; }
+.wb-tool-btn:focus-visible { outline: 2px solid #06b6d4; outline-offset: 3px; }
+.wb-inline-text-editor {
+  position: absolute;
+  z-index: 10002;
+  box-sizing: content-box;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  outline: 1px dashed #06b6d4;
+  outline-offset: 5px;
+  border-radius: 1px;
+  background: transparent;
+  font-family: Arial, sans-serif;
+  font-weight: 600;
+  resize: none;
+  transform-origin: top left;
+  caret-color: #06b6d4;
+}
+.wb-inline-text-editor::placeholder { color: #94a3b8; }
+.wb-latex-source { font-family: Consolas, monospace; font-weight: 400; }
+.wb-math-preview {
+  position: absolute;
+  z-index: 10003;
+  box-sizing: border-box;
+  padding: 10px;
+  border: 1px solid var(--border-color, #353849);
+  border-radius: 10px;
+  background: #12131c;
+  color: #e2e8f0;
+  box-shadow: 0 6px 22px #0005;
+  overflow: auto;
+  font: 12px/1.4 Arial, sans-serif;
+}
+.wb-math-preview[hidden], .wb-math-preview canvas[hidden] { display: none; }
+.wb-math-preview canvas { display: block; max-width: 100%; margin-bottom: 8px; }
+.wb-math-status { overflow-wrap: anywhere; margin-bottom: 8px; }
+.wb-math-status.is-error { color: #f87171; }
+.wb-math-palette { display: flex; flex-wrap: wrap; gap: 5px; }
+.wb-math-palette button {
+  min-width: 32px;
+  min-height: 32px;
+  border: 1px solid #353849;
+  border-radius: 6px;
+  background: #252839;
+  color: #f8fafc;
+  cursor: pointer;
+  font-size: 16px;
+}
+.wb-math-palette button:hover { background: #363c52; }
+.wb-math-palette button:focus-visible { outline: 2px solid #06b6d4; outline-offset: 2px; }
+.wb-inline-text-editor:focus-visible { outline: 1px dashed var(--accent-text); outline-offset: 5px; }
+.wb-tool-hint {
+  position: absolute;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 10002;
+  max-width: calc(100vw - 32px);
+  width: max-content;
+  margin: 0;
+  padding: 7px 12px;
+  border-radius: 8px;
+  background: var(--bg-card);
+  color: var(--text-main);
+  font: 12px/1.4 Arial, sans-serif;
+  text-align: center;
+  pointer-events: none;
+}
+
 @media (max-width: 768px) {
+  .wb-tool-hint { bottom: 180px; }
+  .whiteboard-tools { flex-wrap: wrap; justify-content: center; width: 100%; min-width: 0; }
+  .whiteboard-actions { flex-wrap: wrap; justify-content: center; max-width: 100%; }
+  .whiteboard-brand { flex-wrap: wrap; justify-content: center; }
+  .wb-floating-close-btn { display: none; }
   .whiteboard-topbar {
     top: 8px;
+    width: calc(100vw - 16px);
     padding: 6px 10px;
     gap: 8px;
   }

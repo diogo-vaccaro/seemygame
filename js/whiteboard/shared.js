@@ -5,12 +5,19 @@ export const WHITEBOARD_TOOLS = [
   { id: 'rectangle', name: 'Retângulo', icon: '⬜', shortcut: 'R' },
   { id: 'diamond', name: 'Losango', icon: '💎', shortcut: 'D' },
   { id: 'circle', name: 'Círculo', icon: '⭕', shortcut: 'C' },
+  { id: 'triangle', name: 'Triângulo', icon: '△' },
+  { id: 'right-triangle', name: 'Triângulo retângulo', icon: '◺' },
+  { id: 'hexagon', name: 'Hexágono', icon: '⬡' },
   { id: 'arrow', name: 'Flecha', icon: '➡️', shortcut: 'A' },
-  { id: 'line', name: 'Linha Reta', icon: '📏', shortcut: 'L' },
+  { id: 'line', name: 'Linha / Vértices', icon: '📏', shortcut: 'L' },
   { id: 'text', name: 'Texto', icon: '🔤', shortcut: 'T' },
+  { id: 'formula', name: 'Fórmula', icon: '∑', shortcut: 'M' },
   { id: 'image', name: 'Inserir Imagem', icon: '🖼️', shortcut: 'I' },
   { id: 'eraser', name: 'Borracha', icon: '🧼', shortcut: 'E' },
 ];
+
+export const WHITEBOARD_SHAPES = WHITEBOARD_TOOLS.filter(tool =>
+  ['rectangle', 'diamond', 'circle', 'triangle', 'right-triangle', 'hexagon'].includes(tool.id));
 
 export const WHITEBOARD_COLORS = [
   '#ffffff', // Branco
@@ -108,7 +115,7 @@ export const WHITEBOARD_REF_WIDTH = 1920;
 export const WHITEBOARD_REF_HEIGHT = 1080;
 
 export const WHITEBOARD_ELEMENT_TYPES = new Set([
-  'pencil', 'rectangle', 'diamond', 'circle', 'arrow', 'line', 'text', 'image'
+  'pencil', 'rectangle', 'diamond', 'circle', 'triangle', 'right-triangle', 'hexagon', 'arrow', 'line', 'text', 'formula', 'image'
 ]);
 
 export function isFiniteNumber(value) {
@@ -122,9 +129,19 @@ export function isSafeWhiteboardElement(element) {
     return Array.isArray(element.points) && element.points.length > 0 && element.points.length <= MAX_WHITEBOARD_POINTS &&
       element.points.every((point) => isFiniteNumber(point?.x) && isFiniteNumber(point?.y));
   }
+  if (element.type === 'line' && element.points !== undefined) {
+    return Array.isArray(element.points) && element.points.length >= 2 && element.points.length <= MAX_WHITEBOARD_POINTS &&
+      element.points.every(point => isFiniteNumber(point?.x) && isFiniteNumber(point?.y));
+  }
+  if (element.type === 'formula') {
+    return isFiniteNumber(element.x) && isFiniteNumber(element.y) &&
+      typeof element.latex === 'string' && element.latex.length > 0 && element.latex.length <= 2000 &&
+      (element.fontSize === undefined || (isFiniteNumber(element.fontSize) && element.fontSize >= 8 && element.fontSize <= 96));
+  }
   if (element.type === 'text') {
     return isFiniteNumber(element.x) && isFiniteNumber(element.y) &&
-      typeof element.text === 'string' && element.text.length <= MAX_WHITEBOARD_TEXT_LENGTH;
+      typeof element.text === 'string' && element.text.length <= MAX_WHITEBOARD_TEXT_LENGTH &&
+      (element.fontSize === undefined || (isFiniteNumber(element.fontSize) && element.fontSize >= 8 && element.fontSize <= 96));
   }
   if (element.type === 'image') {
     return isFiniteNumber(element.startX) && isFiniteNumber(element.startY) &&
@@ -147,6 +164,17 @@ export function isSafeWhiteboardElement(element) {
     }
   }
   return ['startX', 'startY', 'endX', 'endY'].every((key) => isFiniteNumber(element[key]));
+}
+
+export function getWhiteboardTextLayout(element, ctx) {
+  const fontSize = element.fontSize || 15;
+  const lines = (element.text || '').split('\n');
+  const font = `600 ${fontSize}px Arial, sans-serif`;
+  ctx?.save?.();
+  if (ctx) ctx.font = font;
+  const width = Math.max(1, ...lines.map(line => ctx?.measureText?.(line)?.width ?? line.length * fontSize * 0.6));
+  ctx?.restore?.();
+  return { fontSize, font, lines, lineHeight: fontSize * 1.35, width, height: lines.length * fontSize * 1.35 };
 }
 
 export async function processImageFile(file, maxWidth = 960, maxHeight = 720) {
