@@ -176,6 +176,7 @@ deleteSelected() {
 
 undo() {
     if (this.undoStack.length === 0) return false;
+    this.invalidateImageImports();
     this.redoStack.push([...this.elements]);
     this.elements = this.undoStack.pop();
     this.pruneImageCache();
@@ -186,6 +187,7 @@ undo() {
 
   redo() {
     if (this.redoStack.length === 0) return false;
+    this.invalidateImageImports();
     this.saveUndoState();
     this.elements = this.redoStack.pop();
     this.pruneImageCache();
@@ -195,9 +197,13 @@ undo() {
   }
 
   clear(broadcast = true) {
+    this.invalidateImageImports();
     this.finishTextEditing?.(false);
     this.cancelDrawing?.();
-    if (this.elements.length === 0) return;
+    if (this.elements.length === 0) {
+      if (broadcast) this.onBoardCleared?.();
+      return;
+    }
     this.saveUndoState();
     this.redoStack = [];
     this.elements = [];
@@ -211,6 +217,7 @@ undo() {
   }
 
 setElements(elements) {
+    this.invalidateImageImports();
     this.elements = Array.isArray(elements)
       ? elements.filter(isSafeWhiteboardElement).slice(0, MAX_WHITEBOARD_ELEMENTS)
       : [];
@@ -219,11 +226,33 @@ setElements(elements) {
     this.render();
   }
 
+invalidateImageImports() {
+    this.imageImportGeneration++;
+    for (const cancel of [...this.pendingImageImports]) cancel();
+  }
+
+async importImageFile(file, targetX = null, targetY = null, broadcast = true) {
+    const generation = this.imageImportGeneration;
+    if (this.isDisposed) return null;
+    const dataUrl = await processImageFile(file);
+    if (this.isDisposed || generation !== this.imageImportGeneration) return null;
+    return this.addImageFromDataUrl(dataUrl, targetX, targetY, broadcast);
+  }
+
 async addImageFromDataUrl(dataUrl, targetX = null, targetY = null, broadcast = true) {
-    if (!dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+    if (this.isDisposed || !dataUrl || typeof dataUrl !== 'string' || !dataUrl.startsWith('data:image/')) return null;
+    const generation = this.imageImportGeneration;
     return new Promise((resolve) => {
       const img = new Image();
+      const finish = value => {
+        this.pendingImageImports.delete(cancel);
+        img.onload = null; img.onerror = null;
+        resolve(value);
+      };
+      const cancel = () => finish(null);
+      this.pendingImageImports.add(cancel);
       img.onload = () => {
+        if (this.isDisposed || generation !== this.imageImportGeneration) { finish(null); return; }
         let w = img.naturalWidth || 400;
         let h = img.naturalHeight || 300;
         const MAX_W = 640;
@@ -270,14 +299,15 @@ async addImageFromDataUrl(dataUrl, targetX = null, targetY = null, broadcast = t
         };
 
         this.addElement(el, broadcast);
+        if (!this.elements.some(element => element.id === el.id)) { finish(null); return; }
         this.setTool('select');
         this.selectedElementId = el.id;
         this.render();
-        resolve(el);
+        finish(el);
       };
       img.onerror = () => {
         console.warn('[Whiteboard] Falha ao carregar imagem para renderização');
-        resolve(null);
+        finish(null);
       };
       img.src = dataUrl;
     });

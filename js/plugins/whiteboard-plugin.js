@@ -8,6 +8,7 @@
 import { BasePlugin } from './base-plugin.js';
 import { whiteboardManager } from '../whiteboard.js';
 import { createWhiteboardTransfers, sendWhiteboardImage, sendWhiteboardSnapshot } from '../whiteboard/transfer.js';
+import { isValidPeerId } from '../shared/peer-id.js';
 
 export class WhiteboardPlugin extends BasePlugin {
   constructor(options = {}) {
@@ -24,6 +25,9 @@ export class WhiteboardPlugin extends BasePlugin {
 
     if (dispatcher) {
       const transfers = createWhiteboardTransfers(this.manager, {
+        onSnapshotApplied: (elements, sourceConn) => {
+          if (shouldRelay()) sendWhiteboardSnapshot(elements, data => broadcast(data, sourceConn?.peer));
+        },
         relayImage: (element, isUpdate, sourceConn) => {
           if (shouldRelay()) sendWhiteboardImage(element, data => broadcast(data, sourceConn?.peer), { isUpdate });
         }
@@ -66,22 +70,25 @@ export class WhiteboardPlugin extends BasePlugin {
 
       this._dispatcherUnsubs.push(
         dispatcher.register('WHITEBOARD_CLEAR', (data, sourceConn) => {
-          if (this.manager.elements.length > 0) {
-            this.manager.clear(false);
-            if (shouldRelay()) broadcast(data, sourceConn?.peer);
-          }
+          this.manager.clear(false);
+          if (shouldRelay()) broadcast(data, sourceConn?.peer);
         }, { description: 'Whiteboard: Clear' })
       );
 
       this._dispatcherUnsubs.push(
         dispatcher.register('WHITEBOARD_CURSOR', (data, sourceConn) => {
-          this.manager.updateRemoteCursor(sourceConn?.peer || 'remote-peer', {
+          const transportPeer = sourceConn?.peer;
+          if (!isValidPeerId(transportPeer)) return;
+          const trustedRelay = this.context?.isTrustedWhiteboardRelayPeer?.(transportPeer) && data.relayedBy === transportPeer;
+          const author = trustedRelay ? data.peerId : transportPeer;
+          if (!isValidPeerId(author)) return;
+          this.manager.updateRemoteCursor(author, {
             x: data.x,
             y: data.y,
             userName: data.userName,
             color: data.color
           });
-          if (shouldRelay()) broadcast(data, sourceConn?.peer);
+          if (shouldRelay()) broadcast({ ...data, peerId: author, relayedBy: this.context?.getPeerId?.() }, transportPeer);
         }, { description: 'Whiteboard: Cursor Movement' })
       );
 

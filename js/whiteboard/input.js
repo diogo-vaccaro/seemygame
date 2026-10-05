@@ -450,6 +450,9 @@ attachEvents() {
   }
 
 dispose() {
+    if (this.isDisposed) return;
+    this.isDisposed = true;
+    this.invalidateImageImports();
     this.finishTextEditing(false);
     this.mathRenderer.dispose();
     this.cancelDrawing();

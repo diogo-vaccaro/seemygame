@@ -426,8 +426,9 @@ drawRemoteCursors(ctx, width, height) {
         continue;
       }
 
-      const px = cursor.x * width;
-      const py = cursor.y * height;
+      const px = cursor.x * width * (this.zoom || 1) + (this.panX || 0);
+      const py = cursor.y * height * (this.zoom || 1) + (this.panY || 0);
+      if (px < 0 || py < 0 || px > width || py > height) continue;
       const userName = (typeof cursor.userName === 'string' && cursor.userName.trim())
         ? cursor.userName.trim()
         : 'Amigo';

@@ -54,6 +54,7 @@ export function registerSessionFeatures(session, {
     canUseTacticalPing: () => !session.services?.coopController?.getCoopState?.().isPlayer2,
     isRoomMode: () => role === 'room',
     isTrustedLaserRelayPeer: peerId => role === 'viewer' && isAuthorizedPeer(peerId),
+    isTrustedWhiteboardRelayPeer: peerId => role === 'viewer' && isAuthorizedPeer(peerId),
     audioScope: session.audioScope,
     showToast
   });

@@ -17,6 +17,9 @@ constructor(options = {}) {
     this.elements = []; // Array de elementos desenhados
     this.undoStack = [];
     this.redoStack = [];
+    this.isDisposed = false;
+    this.imageImportGeneration = 0;
+    this.pendingImageImports = new Set();
 
     this.selectedTool = 'pencil';
     this.currentColor = '#ffffff';

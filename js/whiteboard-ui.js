@@ -1,4 +1,4 @@
-import { processImageFile, WHITEBOARD_SHAPES } from './whiteboard.js';
+import { WHITEBOARD_SHAPES } from './whiteboard.js';
 import { sendWhiteboardSnapshot } from './whiteboard/transfer.js';
 
 export function bindWhiteboardUI(manager, {
@@ -227,9 +227,8 @@ export function bindWhiteboardUI(manager, {
     const file = event.target.files?.[0];
     if (!file) return;
     try {
-      const dataUrl = await processImageFile(file);
-      if (dataUrl) await manager.addImageFromDataUrl(dataUrl);
-      showToast('Imagem inserida na lousa!', 'success');
+      const inserted = await manager.importImageFile(file);
+      if (inserted) showToast('Imagem inserida na lousa!', 'success');
     } catch (_) { showToast('Erro ao carregar imagem na lousa.', 'error'); }
     event.target.value = '';
   });
@@ -277,7 +276,6 @@ export function bindWhiteboardUI(manager, {
     const file = Array.from(event.dataTransfer?.files || []).find((item) => item.type?.startsWith('image/'));
     if (!file) return;
     try {
-      const dataUrl = await processImageFile(file);
       const rect = canvas.getBoundingClientRect();
       const scaleX = (canvas.width || 1920) / 1920;
       const scaleY = (canvas.height || 1080) / 1080;
@@ -286,7 +284,7 @@ export function bindWhiteboardUI(manager, {
       const panY = manager.panY || 0;
       const dropX = Math.round(((event.clientX - rect.left) - panX) / (scaleX * zoom));
       const dropY = Math.round(((event.clientY - rect.top) - panY) / (scaleY * zoom));
-      await manager.addImageFromDataUrl(dataUrl, dropX, dropY);
+      await manager.importImageFile(file, dropX, dropY);
     } catch (_) { showToast('Erro ao carregar imagem solta na lousa.', 'error'); }
   };
   listen(modal, 'dragover', (event) => { if (modal.style.display === 'flex') event.preventDefault(); });
@@ -297,7 +295,7 @@ export function bindWhiteboardUI(manager, {
     const file = item?.getAsFile?.();
     if (!file) return;
     event.preventDefault();
-    try { const dataUrl = await processImageFile(file); await manager.addImageFromDataUrl(dataUrl); }
+    try { await manager.importImageFile(file); }
     catch (_) { showToast('Erro ao processar imagem colada.', 'error'); }
   });
 
@@ -306,6 +304,7 @@ export function bindWhiteboardUI(manager, {
     close,
     toggle,
     destroy() {
+      manager.invalidateImageImports?.();
       manager.finishTextEditing?.(false);
       manager.cancelDrawing?.();
       closeShapes();

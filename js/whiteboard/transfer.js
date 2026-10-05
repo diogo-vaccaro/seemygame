@@ -49,7 +49,7 @@ export function sendWhiteboardSnapshot(elements, send) {
 
 // One resource budget covers incomplete images and staged full snapshots.
 // The visible document changes only after every part of a snapshot arrives.
-export function createWhiteboardTransfers(manager, { relayImage = () => {}, maxBufferedBytes = 16 * 1024 * 1024 } = {}) {
+export function createWhiteboardTransfers(manager, { relayImage = () => {}, onSnapshotApplied = () => {}, maxBufferedBytes = 16 * 1024 * 1024 } = {}) {
   const chunks = new Map(), snapshots = new Map();
   let bufferedBytes = 0, expiryTimer = null;
   const remove = (map, key) => {
@@ -85,7 +85,10 @@ export function createWhiteboardTransfers(manager, { relayImage = () => {}, maxB
     remove(snapshots, key);
     const byId = new Map(elements.map(element => [element.id, element]));
     if (elements.length === entry.elementOrder.length && byId.size === elements.length &&
-        entry.elementOrder.every(id => byId.has(id))) manager.setElements(entry.elementOrder.map(id => byId.get(id)));
+        entry.elementOrder.every(id => byId.has(id))) {
+      manager.setElements(entry.elementOrder.map(id => byId.get(id)));
+      onSnapshotApplied(manager.elements, conn);
+    }
   };
 
   return {
@@ -146,6 +149,7 @@ export function createWhiteboardTransfers(manager, { relayImage = () => {}, maxB
       if (data.imageCount === undefined) {
         if (data.batchIndex === 0) manager.setElements([]);
         data.elements.forEach(el => manager.addElement(el, false));
+        if (data.batchIndex === data.totalBatches - 1) onSnapshotApplied(manager.elements, conn);
         return;
       }
       if (!Number.isInteger(data.imageCount) || data.imageCount < 0 || data.imageCount > MAX_WHITEBOARD_ELEMENTS) return;
@@ -179,8 +183,10 @@ export function createWhiteboardTransfers(manager, { relayImage = () => {}, maxB
     },
 
     receiveFull(data, conn) {
+      if (!Array.isArray(data.elements) || data.elements.length > MAX_WHITEBOARD_ELEMENTS || !data.elements.every(isSafeWhiteboardElement)) return;
       for (const [key, entry] of snapshots) if (entry.peer === peerKey(conn)) remove(snapshots, key);
       manager.setElements(data.elements);
+      onSnapshotApplied(manager.elements, conn);
     },
 
     dispose() {
