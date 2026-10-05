@@ -14,6 +14,9 @@ const require=createRequire(import.meta.url),option=(key,fallback)=>{const i=pro
 const port=Number(option('--browser-port','9333')),controlPort=Number(option('--control-port','9334')),minutes=Number(option('--max-minutes','30')),headless=process.argv.includes('--headless');
 const runtime=option('--runtime','chrome'),root=fileURLToPath(new URL('../../',import.meta.url));
 const browserConfig=option('--browser-config','harness');
+const diagnosticIce=process.argv.includes('--diagnostic-ice-addresses');
+const resourcesOnly=process.argv.includes('--resources-only');
+if(resourcesOnly&&runtime!=='chrome')throw new Error('Resource-only helper cannot start a desktop app');
 if(!['harness','standard'].includes(browserConfig))throw new Error('Invalid browser config');
 if(!['chrome','tauri'].includes(runtime)||runtime==='tauri'&&headless)throw new Error('Use chrome (optionally headless) or tauri in an interactive session');
 const readyFile=option('--ready-file',null),readyPath=readyFile?path.resolve(readyFile):null;
@@ -31,7 +34,9 @@ try {
  }
  resources=await startResourceSampler({enabled:!process.argv.includes('--no-system-metrics')});
  const browserArgs=browserConfig==='harness'?['--disable-background-timer-throttling','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding','--disable-features=CalculateNativeWinOcclusion','--autoplay-policy=no-user-gesture-required','--window-position=30,30','--window-size=1280,800']:['--window-position=30,30','--window-size=1280,800'];
- if(runtime==='tauri'){
+ if(diagnosticIce){const at=browserArgs.findIndex(arg=>arg.startsWith('--disable-features='));if(at>=0)browserArgs[at]+=',WebRtcHideLocalIpsWithMdns';else browserArgs.push('--disable-features=WebRtcHideLocalIpsWithMdns');}
+ if(resourcesOnly){/* Same resource collector in native receiver cases, no browser. */}
+ else if(runtime==='tauri'){
   const exe=path.resolve(option('--exe',path.join(root,'src-tauri/target/release/seemygame.exe')));await stat(exe);
   const profile=path.join(root,'output/playwright',`viewer-profile-${randomUUID()}`);await mkdir(profile,{recursive:true});
   desktop=spawn(exe,[],{cwd:path.dirname(exe),windowsHide:false,stdio:'ignore',env:{...process.env,PATH:[path.join(root,'native-media/gstreamer/bin'),process.env.PATH].filter(Boolean).join(path.delimiter),WEBVIEW2_USER_DATA_FOLDER:profile,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:[...browserArgs,`--remote-debugging-port=${port}`,'--remote-debugging-address=127.0.0.1','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream'].join(' ')}});
@@ -52,7 +57,7 @@ try {
   if(!ready)throw new Error('Standard Chrome CDP readiness timeout');
  }else browserServer=await chromium.launchServer({channel:option('--channel','chrome'),host:'127.0.0.1',port,headless,args:browserArgs});
  const token=randomUUID(),base=`/smg-viewer/${token}`,expiresAt=Date.now()+minutes*60000;
- const metadata={schemaVersion:1,kind:'seemygame-e2e-viewer',runtime,browserConfig,browserArgs,connectionType:runtime==='tauri'||browserConfig==='standard'?'cdp':'playwright',machineFingerprint:machineFingerprint(),platform:os.platform(),cpuModel:os.cpus()[0]?.model,logicalProcessors:os.cpus().length,headless,session,...(runtime==='tauri'||browserConfig==='standard'?{cdpEndpoint:`http://127.0.0.1:${port}`}:{wsEndpoint:browserServer.wsEndpoint()}),playwrightVersion:require('playwright/package.json').version,expiresAt};
+ const metadata={schemaVersion:1,kind:'seemygame-e2e-viewer',runtime,resourcesOnly,browserConfig,browserArgs,connectionType:resourcesOnly?'resources':runtime==='tauri'||browserConfig==='standard'?'cdp':'playwright',machineFingerprint:machineFingerprint(),platform:os.platform(),cpuModel:os.cpus()[0]?.model,logicalProcessors:os.cpus().length,headless,session,...(resourcesOnly?{}:runtime==='tauri'||browserConfig==='standard'?{cdpEndpoint:`http://127.0.0.1:${port}`}:{wsEndpoint:browserServer.wsEndpoint()}),playwrightVersion:require('playwright/package.json').version,expiresAt};
  control=http.createServer((request,response)=>{
   response.setHeader('Cache-Control','no-store');response.setHeader('Content-Type','application/json');
   if(request.method==='POST'&&request.url===base+'/shutdown'&&!request.headers.origin){response.end('{"stopping":true}');setImmediate(()=>void stop());return;}

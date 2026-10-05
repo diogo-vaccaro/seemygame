@@ -1,8 +1,9 @@
 // Injected only into isolated E2E browser contexts. Never ships with dist.
-export function installTelemetry({ expectedSessionMagic = null, enableOptical = null, opticalSampleHz = 8, opticalReaderMode = 'gpu-roi' } = {}) {
+export function installTelemetry({ expectedSessionMagic = null, enableOptical = null, opticalSampleHz = 8, opticalReaderMode = 'gpu-roi', opticalSourceWidth = 1280 } = {}) {
   const opticalEnabled = enableOptical ?? (expectedSessionMagic !== null);
   if (!Number.isFinite(opticalSampleHz) || opticalSampleHz < 1 || opticalSampleHz > 60) throw new Error('Optical sampling must be 1..60 Hz');
   if (!['legacy', 'roi', 'gpu-roi'].includes(opticalReaderMode)) throw new Error('Invalid optical reader mode');
+  if (!Number.isInteger(opticalSourceWidth) || opticalSourceWidth < 320 || opticalSourceWidth > 3840) throw new Error('Invalid optical source width');
   const legacyReader = opticalReaderMode === 'legacy';
   const Base = window.RTCPeerConnection;
   const peers = [];
@@ -324,13 +325,16 @@ export function installTelemetry({ expectedSessionMagic = null, enableOptical = 
             const img = fullCtx.getImageData(0, 0, sampleW, sampleH);
             readbackMs += performance.now() - stageStart;
             stageStart = performance.now();
-            const nomScale = video.videoWidth > 0 ? (video.videoWidth / 1280) : 1;
+            const nomScale = video.videoWidth > 0 ? (video.videoWidth / opticalSourceWidth) : 1;
             const nomW = Number((8 * nomScale).toFixed(2));
             const candidateWidths = [];
             if (lastSuccessfulWidth != null) candidateWidths.push(lastSuccessfulWidth);
             for (let dw = -0.4; dw <= 0.4; dw += 0.05) {
               const w = Number((nomW + dw).toFixed(2));
-              if (w >= 6 && !candidateWidths.includes(w)) candidateWidths.push(w);
+              // A 1080p source sent at 720p has 8*(1280/1920)=5.33px blocks.
+              // CRC/session checks still qualify every candidate; do not silently
+              // exclude downscaled streams and force expensive full searches.
+              if (w >= 3 && !candidateWidths.includes(w)) candidateWidths.push(w);
             }
             for (const w of [8, 10, 12, 16]) {
               if (!candidateWidths.includes(w)) candidateWidths.push(w);

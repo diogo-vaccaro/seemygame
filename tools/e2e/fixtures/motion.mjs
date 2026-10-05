@@ -1,4 +1,7 @@
-export function createMotionFixture(syntheticTitle, sessionMagic, fps = 60, {width=1280,height=720}={}) {
+import {gameWorkloadScript,validateGameWorkload} from './game-workload.mjs';
+
+export function createMotionFixture(syntheticTitle, sessionMagic, fps = 60, {width=1280,height=720,workload}={}) {
+const load=validateGameWorkload(workload);
 if (!Number.isFinite(fps) || fps < 1 || fps > 120) throw new Error('Cadência sintética inválida');
 if (![width,height].every(v=>Number.isInteger(v)&&v>=240&&v<=3840)) throw new Error('Dimensão sintética inválida');
 return `<!doctype html>
@@ -95,8 +98,8 @@ function renderFrame(now) {
     window.__smgSourceStats.frameLog.shift();
   }
 
-  x.fillStyle = '#142033';
-  x.fillRect(0, 0, c.width, c.height);
+  if (${load.profile!=='off'&&load.scene==='visible'}) x.clearRect(0, 0, c.width, c.height);
+  else { x.fillStyle = '#142033'; x.fillRect(0, 0, c.width, c.height); }
 
   // Marcador óptico no topo esquerdo (772px de largura, 20px de altura)
   encodeOptical(frame, nowMs);
@@ -139,6 +142,7 @@ requestAnimationFrame(onRaf);
 setInterval(() => {
   renderFrame(performance.now());
 }, 8);
+${gameWorkloadScript(load)}
 </script>`;
 
 }

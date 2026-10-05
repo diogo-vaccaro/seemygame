@@ -1,4 +1,4 @@
-import { expect, it, describe } from 'vitest';
+import { expect, it, describe, vi } from 'vitest';
 import { deltaMetrics, installTelemetry, evaluateQualityBudget, computeSteadyQuality } from '../tools/e2e/telemetry.mjs';
 import {
   MARKER_CONFIG,
@@ -8,6 +8,12 @@ import {
   decodeOpticalMarker,
   computeVisualLatency
 } from '../tools/e2e/optical.mjs';
+
+it('optical detector accepts the actual source width and rejects invalid calibration',()=>{
+  window.RTCPeerConnection=class {};
+  expect(()=>installTelemetry({enableOptical:false,opticalSourceWidth:1920})).not.toThrow();
+  for(const opticalSourceWidth of [0,NaN,10000])expect(()=>installTelemetry({opticalSourceWidth})).toThrow('source width');
+});
 
 it('E2E: calcula deltas sem confundir cumulativos com fila e expõe atraso observável da ponte', () => {
   const prev = {
@@ -236,6 +242,26 @@ describe('Módulo Óptico E2E Robusto (Protocolo 96 bits e CRC-16)', () => {
     expect(decoded?.sourceTimeMs).toBe(sourceTimeMs >>> 0);
     expect(decoded?.sessionMagic).toBe(sessionMagic);
     expect(decoded?.detectedBlockWidth).toBe(8);
+  });
+
+  it('installed video reader recognizes a 1080p marker transmitted at 720p',async()=>{
+    const magic=0x1234,seq=123;
+    const marker=renderSyntheticMarker(seq,Date.now(),magic,8*1280/1920);
+    const rgba=new Uint8ClampedArray(1280*200*4);
+    for(let y=0;y<marker.height;y++)rgba.set(marker.rgba.subarray(y*marker.width*4,(y+1)*marker.width*4),y*1280*4);
+    const context={drawImage:()=>{},getImageData:()=>({data:rgba})};
+    const canvas=vi.spyOn(HTMLCanvasElement.prototype,'getContext').mockReturnValue(context);
+    const clock=vi.spyOn(performance,'now').mockReturnValue(1000);
+    const video=document.createElement('video');let callback;
+    Object.defineProperties(video,{videoWidth:{value:1280},videoHeight:{value:720},readyState:{value:4}});
+    video.requestVideoFrameCallback=cb=>{callback=cb;return 1;};document.body.append(video);
+    window.RTCPeerConnection=class {};
+    try{
+      installTelemetry({expectedSessionMagic:magic,enableOptical:true,opticalSourceWidth:1920});
+      await window.__smgE2E.sample();
+      callback(1000,{expectedDisplayTime:1000,presentedFrames:1});
+      expect(video.__smgPresentation.getStats()).toMatchObject({lastSeq:seq,validSamplesCount:1,rejectedCandidatesCount:0});
+    }finally{video.remove();canvas.mockRestore();clock.mockRestore();}
   });
 
   it('rejeita quando expectedMagic não coincide', () => {

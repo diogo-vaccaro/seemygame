@@ -162,6 +162,8 @@ mod tests {
     }
     include!("media/cadence_probe.rs");
     include!("media/capture_stage_probe.rs");
+    include!("media/transport_comparison_probe.rs");
+    include!("media/frame_journey_probe.rs");
     include!("media/queue_policy_tests.rs");
 
     #[test]

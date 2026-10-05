@@ -72,7 +72,10 @@ fn benchmark_native_capture_stages() {
     let capture_backend = env::var("SMG_PROBE_CAPTURE").unwrap_or_else(|_| "d3d11".into());
     assert!(matches!(capture_backend.as_str(), "d3d11" | "d3d12"), "unsupported capture probe backend");
     assert!(capture_backend != "d3d12" || backend == H264EncoderBackend::Nvenc, "D3D12 experiment currently isolates capture using the same D3D11 NVENC encoder");
-    let config = MediaWorkerConfig { capture_backend:CaptureBackend::parse(&capture_backend).unwrap(),h264_encoder:backend,fps,width:Some(1280),height:Some(720),bitrate_kbps:4500,..Default::default() };
+    let width=env::var("SMG_PROBE_WIDTH").ok().and_then(|s|s.parse::<u32>().ok()).unwrap_or(1280).clamp(320,1920);
+    let height=env::var("SMG_PROBE_HEIGHT").ok().and_then(|s|s.parse::<u32>().ok()).unwrap_or(720).clamp(240,1080);
+    let bitrate=env::var("SMG_PROBE_BITRATE").ok().and_then(|s|s.parse::<u32>().ok()).unwrap_or(4500).clamp(256,50000);
+    let config = MediaWorkerConfig { capture_backend:CaptureBackend::parse(&capture_backend).unwrap(),h264_encoder:backend,fps,width:Some(width),height:Some(height),bitrate_kbps:bitrate,..Default::default() };
     let args = build_pipeline(&source,&config,5000,None).unwrap();
     let end = args.iter().position(|s|s=="udpsink").unwrap()-1;
     let mut chain=Vec::new(); let mut queues=0;
@@ -101,13 +104,15 @@ fn benchmark_native_capture_stages() {
         });
     }
     let timing=attach_probe_encoder_timing(&pipeline,"stage-encoder");
+    let journey=attach_probe_frame_journey(&pipeline);
     let result=(||->Result<serde_json::Value,String>{
         pipeline.set_state(gstreamer::State::Playing).map_err(|e|format!("{e:?}"))?;
         std::thread::sleep(Duration::from_secs(2));
         for s in stages.iter(){*s.lock().unwrap()=Stage::default();}
-        timing.lock().unwrap().samples_ms.clear();
-        let rate=pipeline.by_name("stage-rate").unwrap();let baseline_drop=rate.property::<u64>("drop");
+        *timing.lock().unwrap()=ProbeEncoderTiming::default();
+        let rate=pipeline.by_name("stage-rate").unwrap();let baseline_drop=rate.property::<u64>("drop");let baseline_duplicate=rate.property::<u64>("duplicate");
         let started=Instant::now();let epoch=std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis();
+        *journey.lock().unwrap()=ProbeFrameJourney {start:Some(started),..Default::default()};
         let mut queue_samples=Vec::new();let bus=pipeline.bus().unwrap();
         while started.elapsed()<Duration::from_secs(seconds) {
             if let Some(msg)=bus.timed_pop_filtered(gstreamer::ClockTime::from_mseconds(200),&[gstreamer::MessageType::Error,gstreamer::MessageType::Eos]) {
@@ -116,6 +121,7 @@ fn benchmark_native_capture_stages() {
             queue_samples.push(serde_json::json!({"atMs":started.elapsed().as_millis(),"captureMs":pipeline.by_name("stage-capture-queue").unwrap().property::<u64>("current-level-time") as f64/1e6,"encoderMs":pipeline.by_name("stage-encoder-queue").unwrap().property::<u64>("current-level-time") as f64/1e6}));
         }
         let elapsed=started.elapsed().as_secs_f64();
+        let frame_journey={let mut j=journey.lock().unwrap();j.start=None;j.report()};
         let stats=stages.iter().zip(["capture","videorate","convert","encoderInput","encoded"]).map(|(stage,name)|{
             let s=stage.lock().unwrap();let mut gaps=s.gaps.clone();gaps.sort_by(f64::total_cmp);
             (name.to_string(),serde_json::json!({"frames":s.frames,"fps":s.frames as f64/elapsed,"gapP95Ms":if gaps.is_empty(){None}else{Some(gaps[((gaps.len() as f64*0.95).ceil() as usize)-1])},"maxGapMs":gaps.last()}))
@@ -125,7 +131,7 @@ fn benchmark_native_capture_stages() {
         let encoder_caps=pipeline.by_name("stage-encoder").unwrap().static_pad("src").unwrap().current_caps().map(|c|c.to_string());
         let encoder_input_caps=pipeline.by_name("stage-encoder").unwrap().static_pad("sink").unwrap().current_caps().map(|c|c.to_string());
         let capture_caps=pipeline.by_name("stage-capture").unwrap().static_pad("src").unwrap().current_caps().map(|c|c.to_string());
-        Ok(serde_json::json!({"status":"delivered","backend":backend.as_str(),"captureBackend":capture_backend,"pipeline":chain.join(" "),"gstreamerVersion":gstreamer::version_string().to_string(),"encoderInputCaps":encoder_input_caps,"targetFps":fps,"steadySeconds":elapsed,"steadyStartedAt":epoch,"steadyEndedAt":epoch+(elapsed*1000.0) as u128,"stages":stats,"videorateDrop":rate.property::<u64>("drop")-baseline_drop,"videorateDuplicate":rate.property::<u64>("duplicate"),"queueSamples":queue_samples,"captureCaps":capture_caps,"sourceGeometry":{"width":source.width,"height":source.height,"dpi":source.dpi,"left":source.left,"top":source.top},"encoderCaps":encoder_caps,"encoderTimingSamples":times.len(),"encoderWallP50Ms":if times.is_empty(){None}else{Some(times[times.len()/2])},"encoderWallP95Ms":if times.is_empty(){None}else{Some(times[((times.len() as f64*0.95).ceil() as usize)-1])},"limitations":["WGC dedicated Chrome window; no network/audio/replay","In-process diagnostic pipeline, normal process priority, not the shipping gst-launch worker","Queue sampled at 5Hz; short peaks may be missed","Encoder segment wall time includes scheduling/internal buffering, not GPU-only execution"]}))
+        Ok(serde_json::json!({"status":"delivered","backend":backend.as_str(),"captureBackend":capture_backend,"pipeline":chain.join(" "),"gstreamerVersion":gstreamer::version_string().to_string(),"encoderInputCaps":encoder_input_caps,"targetFps":fps,"steadySeconds":elapsed,"steadyStartedAt":epoch,"steadyEndedAt":epoch+(elapsed*1000.0) as u128,"stages":stats,"videorateDrop":rate.property::<u64>("drop")-baseline_drop,"videorateDuplicate":rate.property::<u64>("duplicate")-baseline_duplicate,"frameJourney":frame_journey,"queueSamples":queue_samples,"captureCaps":capture_caps,"sourceGeometry":{"width":source.width,"height":source.height,"dpi":source.dpi,"left":source.left,"top":source.top},"encoderCaps":encoder_caps,"encoderTimingSamples":times.len(),"encoderWallP50Ms":if times.is_empty(){None}else{Some(times[times.len()/2])},"encoderWallP95Ms":if times.is_empty(){None}else{Some(times[((times.len() as f64*0.95).ceil() as usize)-1])},"limitations":["WGC dedicated Chrome window; no network/audio/replay","In-process diagnostic pipeline, normal process priority, not the shipping gst-launch worker","Queue sampled at 5Hz; short peaks may be missed","Encoder segment wall time includes scheduling/internal buffering, not GPU-only execution"]}))
     })();
     let _=pipeline.set_state(gstreamer::State::Null);
     match result {Ok(row)=>println!("SMG_CAPTURE_STAGE {row}"),Err(error)=>panic!("capture stage probe failed: {error}")}

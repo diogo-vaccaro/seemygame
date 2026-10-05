@@ -12,6 +12,7 @@ export function readSourceStatsSummary(stats = globalThis.window?.__smgSourceSta
     sessionMagic: stats.sessionMagic,
     width: stats.width,
     height: stats.height,
-    frameLogLength: stats.frameLog?.length ?? 0
+    frameLogLength: stats.frameLog?.length ?? 0,
+    workload: stats.workload ? {...stats.workload} : null
   };
 }

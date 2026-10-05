@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$RunId,[ValidateSet('chrome','tauri')][string]$Runtime='chrome',[string]$Exe,[ValidateSet('start','stop')][string]$Mode='start',[ValidateSet('harness','standard')][string]$BrowserConfig='harness',[switch]$KeepDisplayAwake)
+param([Parameter(Mandatory=$true)][string]$RunId,[ValidateSet('chrome','tauri')][string]$Runtime='chrome',[string]$Exe,[ValidateSet('start','stop')][string]$Mode='start',[ValidateSet('harness','standard')][string]$BrowserConfig='harness',[switch]$KeepDisplayAwake,[switch]$DiagnosticIceAddresses,[switch]$ResourcesOnly)
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 if($RunId -notmatch '^matrix-[a-zA-Z0-9-]{1,80}$'){throw 'Invalid test run id'}
@@ -36,7 +36,8 @@ $agent=Join-Path $projectRoot 'tools/e2e/viewer-agent.mjs'
 $runner=Join-Path $stage 'start.ps1'
 $escape={param($text) "'"+$text.Replace("'","''")+"'"}
 $script="`$ErrorActionPreference='Stop'; Set-Location -LiteralPath $(&$escape $projectRoot); & $(&$escape $node) $(&$escape $agent) --runtime $Runtime --browser-config $BrowserConfig --channel chrome --browser-port 19333 --control-port 19334 --max-minutes 6 --ready-file $(&$escape $ready)"
-if($Runtime -eq 'tauri'){$script+=" --exe $(&$escape $Exe)"}
+if($DiagnosticIceAddresses){$script+=' --diagnostic-ice-addresses'}; if($Runtime -eq 'tauri'){$script+=" --exe $(&$escape $Exe)"}
+if($ResourcesOnly){if($Runtime -ne 'chrome'){throw 'Resource-only helper cannot start Tauri'};$script+=' --resources-only'}
 $errorLog=Join-Path $stage 'errors.log'
 $script+=" 2> $(&$escape $errorLog) | Out-Null"
 if($KeepDisplayAwake){

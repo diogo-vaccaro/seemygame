@@ -41,12 +41,70 @@ export async function calibrateBrowserClocks(sourcePage,receiverPage,{samples=25
   return {...summarizeClockSamples(rows,{maxErrorMs}),collectedAtSourceEpoch:rows.at(-1)?.localReceive};
 }
 
-export function validateClockCheckpoints(reference,checkpoints,{maxErrorMs=10,opticalQuantizationMs=1}={}) {
+/** Retry control-path congestion, retaining every attempt. Clock instability is
+ * never retried away, and the accepted uncertainty budget never increases. */
+export async function retryUncertainCalibration(collect,{attempts=3,desiredUncertaintyMs=6}={}) {
+  if(!Number.isInteger(attempts)||attempts<1||attempts>5)throw Error('Calibration retries: 1..5');
+  const history=[];let result,best;
+  for(let i=0;i<attempts;i++){
+    result=await collect();
+    history.push(result);
+    if(!['valid','too-uncertain'].includes(result.status))return {...result,retryAttempts:history};
+    if(best&&Number.isFinite(result.sourceTimeOrigin)&&(result.sourceTimeOrigin!==best.sourceTimeOrigin||result.receiverTimeOrigin!==best.receiverTimeOrigin||Math.max(result.lowerMs,best.lowerMs)>Math.min(result.upperMs,best.upperMs)))return {...result,status:'unstable',retryAttempts:history,retryReason:'inconsistent-retry-origins-or-bounds'};
+    if(!best||result.uncertaintyMs<best.uncertaintyMs)best=result;
+    if(result.status==='valid'&&result.uncertaintyMs<=desiredUncertaintyMs)break;
+  }
+  return {...best,retryAttempts:history};
+}
+
+export async function calibrateBrowserClocksReliably(sourcePage,receiverPage,options={}) {
+  return retryUncertainCalibration(()=>calibrateLocalSourceClock(sourcePage,receiverPage,{samples:100,...options}));
+}
+
+/** The fixture is launched on the runner's physical machine. Node Date.now and
+ * fixture Date.now share that OS wall clock. Bracket their agreement explicitly,
+ * then timestamp control traffic in Node to exclude local source-page IPC stalls
+ * from network uncertainty. The remote endpoint remains the browser compositor
+ * clock, never the notebook OS clock. No clocks or playback settings are changed. */
+export async function calibrateLocalSourceClock(sourcePage,receiverPage,{samples=25,maxErrorMs=10}={}) {
+  if(!Number.isInteger(samples)||samples<5||samples>100)throw Error('Clock samples must be 5..100');
+  const agreement=[];
+  const readSource=async()=>{
+    const start=Date.now();
+    const page=await sourcePage.evaluate(()=>({epoch:Date.now(),timeOrigin:performance.timeOrigin}));
+    const end=Date.now();
+    const deviationMs=Math.max(0,start-page.epoch,page.epoch-end);
+    agreement.push({start,end,...page,deviationMs});
+    if(deviationMs>1)throw Object.assign(Error('Local fixture and runner wall-clock agreement failed'),{sourceClockAgreement:{start,end,...page,deviationMs}});
+    return page;
+  };
+  const source=await readSource(),rows=[];
+  for(let i=0;i<samples;i++){
+    const localMonoSend=performance.timeOrigin+performance.now(),localSend=Date.now();
+    const remote=await receiverPage.evaluate(()=>{
+      const receive=performance.timeOrigin+performance.now();
+      return {receive,send:performance.timeOrigin+performance.now(),timeOrigin:performance.timeOrigin};
+    });
+    const localReceive=Date.now(),localMonoReceive=performance.timeOrigin+performance.now();
+    rows.push({localSend,remoteReceive:remote.receive,remoteSend:remote.send,localReceive,localMonoSend,localMonoReceive,sourceTimeOrigin:source.timeOrigin,receiverTimeOrigin:remote.timeOrigin});
+  }
+  const after=await readSource();
+  rows.forEach(row=>row.sourceTimeOriginAfter=after.timeOrigin);
+  return {...summarizeClockSamples(rows,{maxErrorMs}),method:'local-node-shared-os-wallclock-to-receiver-browser-four-timestamps',sourceClockAgreement:{assumption:'Fixture is locally launched by this runner; both Date.now values use the same OS wall clock',observations:agreement},collectedAtSourceEpoch:rows.at(-1)?.localReceive};
+}
+
+export function validateClockCheckpoints(reference,checkpoints,{maxErrorMs=10,opticalQuantizationMs=1,recenter=false}={}) {
   if(!reference||reference.status!=='valid'||!Number.isFinite(reference.offsetMs))return {status:'invalid',reason:'invalid-reference',uncertaintyMs:null};
   const points=[reference,...checkpoints];
   if(points.some(p=>p.status!=='valid'||p.sourceTimeOrigin!==reference.sourceTimeOrigin||p.receiverTimeOrigin!==reference.receiverTimeOrigin||Math.abs(p.sourceAnchorMs-reference.sourceAnchorMs)>3))return {status:'invalid',reason:'clock-step-origin-change-or-uncertain-checkpoint',uncertaintyMs:null};
-  const uncertaintyMs=Math.max(...points.map(p=>Math.abs(p.offsetMs-reference.offsetMs)+p.uncertaintyMs))+opticalQuantizationMs;
-  return {status:uncertaintyMs<=maxErrorMs?'valid':'invalid',reason:uncertaintyMs<=maxErrorMs?null:'offset-envelope-exceeds-budget',uncertaintyMs,offsetMs:reference.offsetMs,observedOffsetRangeMs:Math.max(...points.map(p=>p.offsetMs))-Math.min(...points.map(p=>p.offsetMs)),checkpointCount:points.length,maxErrorMs,scope:'offset envelope at sampled checkpoints; unobserved transients cannot be certified'};
+  // Union, never intersection: retain EVERY offset allowed by either checkpoint.
+  // Optional centering removes only the excess radius caused by fixing the
+  // estimate at the first midpoint. Callers MUST use the returned offsetMs.
+  const lowerMs=Math.min(...points.map(p=>p.offsetMs-p.uncertaintyMs));
+  const upperMs=Math.max(...points.map(p=>p.offsetMs+p.uncertaintyMs));
+  const offsetMs=recenter?(lowerMs+upperMs)/2:reference.offsetMs;
+  const uncertaintyMs=Math.max(upperMs-offsetMs,offsetMs-lowerMs)+opticalQuantizationMs;
+  return {status:uncertaintyMs<=maxErrorMs?'valid':'invalid',reason:uncertaintyMs<=maxErrorMs?null:'offset-envelope-exceeds-budget',uncertaintyMs,offsetMs,lowerMs,upperMs,recentered:recenter,observedOffsetRangeMs:Math.max(...points.map(p=>p.offsetMs))-Math.min(...points.map(p=>p.offsetMs)),checkpointCount:points.length,maxErrorMs,scope:'offset envelope at sampled checkpoints; unobserved transients cannot be certified'};
 }
 
 export function correctedVisualLatency(receiverEpoch,sourceTime32,offsetMs) {
