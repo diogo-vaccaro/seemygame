@@ -75,6 +75,8 @@ const chatManager = options.chatManager || new ChatManager();
 let audioScope = null;
 const voiceManager = options.voiceManager || new VoiceManager({ audioContextProvider: () => audioScope?.getContext() });
 const instanceKey = Symbol('room-entry');
+let activeRuntime = null;
+const navigateHome = options.navigateHome || (() => window.location.assign('index.html'));
 
 const isRoomPage = true;
 
@@ -402,9 +404,7 @@ async function setupRoomSession(peerId, session = roomState.session) {
       },
       onToggleStream: () => roomState.sourcePicker?.toggle(),
       onLeaveRoom: () => {
-        leaveRoomVoice(rm, session);
-        rm.leave();
-        try { roomState.peer?.destroy(); } catch (_) {}
+        activeRuntime?.leave();
       }
     });
     roomState.discordUI.init();
@@ -582,6 +582,7 @@ async function startRoomCapture(rm, session, captureOptions = {}) {
   captureOptions = { ...readCaptureSettings(), ...captureOptions };
   const epoch = roomState.captureEpoch = (roomState.captureEpoch || 0) + 1;
   let stream = null;
+  let unregisterPendingCapture;
   try {
     if (captureOptions.sourceId) {
       bindCaptureSettings(session, () => roomState.captureProvider, showToast);
@@ -593,6 +594,9 @@ async function startRoomCapture(rm, session, captureOptions = {}) {
       const result = await provider.start({ fps: 60, width: 1920, height: 1080, bitrateKbps: 7500, ...captureOptions });
       stream = result.stream;
     } else stream = await requestBrowserDisplayMedia({ ...captureOptions, video: captureVideoConstraints(captureOptions) });
+    // Own the display immediately, including while microphone permission is pending.
+    unregisterPendingCapture = session?.registerCleanup(stream);
+    if (session?.isDisposed || epoch !== roomState.captureEpoch) { stream.getTracks().forEach(track => track.stop()); return null; }
     if (captureOptions.audioMode === 'mic') {
       const microphone = await navigator.mediaDevices.getUserMedia({ audio: true });
       microphone.getAudioTracks().forEach(track => stream.addTrack(track));
@@ -618,7 +622,7 @@ async function startRoomCapture(rm, session, captureOptions = {}) {
       roomState.captureProvider = null;
     }
     showToast('Não foi possível iniciar o compartilhamento.', 'error');
-  } finally { roomState.isStartingStream = false; }
+  } finally { unregisterPendingCapture?.(); roomState.isStartingStream = false; }
 }
 
 function stopRoomCapture(rm, session) {
@@ -633,7 +637,7 @@ function stopRoomCapture(rm, session) {
   removeVideoCard('local-me');
   roomState.discordUI?.setStreamingState(false);
   rm.setLocalStreaming(false);
-  session?.eventBus.emit('stream:stopped');
+  session?.eventBus.emit('stream:stopped', { sourceId: 'local-me' });
 }
 
 async function initRoomPeer(customId = null, session = roomState.session) {
@@ -918,7 +922,7 @@ async function initRoomApp(options = {}) {
     dispose: () => {
       if (session.isDisposed) return;
       if (roomState.roomManager) {
-        if (roomState.localStream) stopRoomCapture(roomState.roomManager, session);
+        stopRoomCapture(roomState.roomManager, session);
         leaveRoomVoice(roomState.roomManager, session);
         try { roomState.roomManager.leave(); } catch (e) {}
       }
@@ -945,6 +949,12 @@ async function initRoomApp(options = {}) {
     state: roomState,
     getRoomInfo: getRoomInfoFromUrl
   };
+  runtime.leave = () => {
+    runtime.dispose();
+    if (typeof options.navigateHome === 'function') options.navigateHome();
+    else navigateHome();
+  };
+  activeRuntime = runtime;
   const reloadPorts = {
     get roomManager() { return roomState.roomManager; },
     get localStream() { return roomState.localStream; },
