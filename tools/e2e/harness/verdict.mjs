@@ -1,4 +1,17 @@
 /** Functional delivery and qualification are independent claims. Unsupported/empty never pass. */
+export function assessVideoContinuity(timeline, { maxStallMs = 3000 } = {}) {
+  let lastFrames = null, lastAdvance = null, maxObservedStallMs = 0, observed = 0, advances = 0;
+  for (const sample of timeline || []) {
+    const at = sample.receiverSamplePerf, frames = sample.presentation?.presentedFrames;
+    if (!Number.isFinite(at) || !Number.isFinite(frames)) continue;
+    if (lastFrames !== null && frames < lastFrames) return { passed: false, reason: 'frame-counter-reset', maxObservedStallMs, observed };
+    if (lastFrames !== null && frames > lastFrames) advances++;
+    if (lastAdvance === null || frames > lastFrames) lastAdvance = at;
+    maxObservedStallMs = Math.max(maxObservedStallMs, at - lastAdvance);
+    lastFrames = frames; observed++;
+  }
+  return { passed: observed >= 2 && advances > 0 && maxObservedStallMs < maxStallMs, reason: observed < 2 ? 'insufficient-frame-evidence' : maxObservedStallMs >= maxStallMs ? 'video-stalled' : advances === 0 ? 'no-advancing-frames' : 'frames-progress', maxObservedStallMs, observed, advances, maxStallMs };
+}
 export function summarizeQualityRuns(runs,{requireQuality=false}={}) {
   const delivered=runs.filter(r=>r.status==='delivered'),failed=runs.some(r=>r.status==='failed');
   const functionalPassed=delivered.length>0&&!failed;

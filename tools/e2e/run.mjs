@@ -1,4 +1,5 @@
 import { startAssetServer } from './harness/server.mjs';
+import { resolveDesktopTestProfile, readInstanceProfileEvidence } from './harness/desktop-profile.mjs';
 import { startSignalingServer } from './harness/signaling.mjs';
 import { bounded, createCleanupCollector } from './harness/lifecycle.mjs';
 import { listFrontendFiles, listRustFiles, frontendSourceMatches } from './harness/provenance.mjs';
@@ -21,7 +22,7 @@ import { QUALITY_PROFILES } from '../../js/config.js';
 import {resolveTestProfiles,installTestStreamProfile,isSevereCadenceDrop,resolveWebCaptureStages} from './harness/stream-profile.mjs';
 import { assessQuality } from '../../js/streaming/quality.js';
 import { startResourceSampler } from './harness/resources.mjs';
-import { evaluateStreamVerdict } from './harness/verdict.mjs';
+import { evaluateStreamVerdict, assessVideoContinuity } from './harness/verdict.mjs';
 import { readSourceStatsSummary } from './harness/source-summary.mjs';
 import { createRequire } from 'node:module';
 import { machineFingerprint, readViewerControl, prepareRemoteViewer, resourceWindow, redactViewerSecrets } from './harness/remote-viewer.mjs';
@@ -43,6 +44,7 @@ ensureDefaultDesktop();
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const args = process.argv.slice(2);
+const productionSignaling = args.includes('--production-signaling');
 const exerciseVoice = args.includes('--exercise-voice-controls');
 const option = (key, fallback) => { const i = args.indexOf(key); return i < 0 ? fallback : args[i + 1]; };
 const exe = path.resolve(option('--exe', path.join(root, 'src-tauri/target/debug/seemygame.exe')));
@@ -54,11 +56,16 @@ const receiverFrameEvidence=args.includes('--receiver-frame-evidence')||receiver
 const receiverViewportOption=option('--receiver-viewport','1280,720');
 const receiverViewport=receiverViewportOption?.split(',').map(Number)??null;
 if(receiverViewport&&(receiverViewport.length!==2||receiverViewport.some(v=>!Number.isInteger(v)||v<240||v>3840)))throw new Error('Invalid receiver viewport (width,height; 240..3840)');
-if(!Number.isInteger(receiverTraceSeconds)||receiverTraceSeconds<0||receiverTraceSeconds>Math.min(60,duration-8))throw new Error('Invalid trace duration');
+if(!Number.isInteger(receiverTraceSeconds)||receiverTraceSeconds<0||receiverTraceSeconds>0&&receiverTraceSeconds>Math.min(60,duration-8))throw new Error('Invalid trace duration');
 if (!Number.isFinite(duration) || duration < 5 || duration > 1800) throw new Error('--seconds: intervalo permitido 5..1800');
 const minFps = Number(option('--min-fps', '0'));
 if (!Number.isFinite(minFps) || minFps < 0 || minFps > 240) throw new Error('--min-fps: intervalo permitido 0..240');
 const remoteViewerEndpoint = option('--viewer-endpoint', null);
+const desktopProfileOption = option('--desktop-profile', null);
+const desktopCdpPort = Number(option('--desktop-cdp-port', '0'));
+if (!Number.isInteger(desktopCdpPort) || desktopCdpPort < 0 || desktopCdpPort > 65535 || desktopCdpPort > 0 && (desktopCdpPort < 1024 || !desktopProfileOption || !remoteViewerEndpoint || !args.includes('--allow-same-machine-remote'))) throw new Error('Shared desktop CDP requires a test profile and same-machine viewer endpoint');
+const nativeAudioMode = option('--native-audio', 'none');
+if (!['none', 'system', 'process'].includes(nativeAudioMode)) throw new Error('Invalid native audio mode');
 const viewerSshHost=option('--viewer-ssh-host',null);
 const calibrateClocks=args.includes('--calibrate-clocks');
 const clockMaxErrorMs=Number(option('--clock-max-error-ms','10'));
@@ -140,6 +147,7 @@ const report = {
   ]
 };
 let desktop, viewerBrowser, sourceBrowser, nativeBrowser, hostPage, viewerPage, server, remoteViewer;
+let sharedReceiverTargetId;
 const resources = await startResourceSampler({enabled:!args.includes('--no-system-metrics')});
 let signaling,reverseTunnel;
 let activeReceiverTrace,pendingReceiverTrace,activeSenderTrace,pendingSenderTrace;
@@ -227,13 +235,16 @@ const serve = async () => {
 };
 const isolatedInit = async context => {
   await context.route('**/peerjs.min.js', route => route.fulfill({ path: path.join(root, 'node_modules/peerjs/dist/peerjs.min.js') }));
-  await context.route('**/api/turn', route => route.fulfill({ status: 404, body: '{}' }));
-  await context.addInitScript(config => { window.__SEEMYGAME_PEER_CONFIG__ = config; }, signaling.config);
+  if (!productionSignaling) await context.route('**/api/turn', route => route.fulfill({ status: 404, body: '{}' }));
+  if (!productionSignaling) await context.addInitScript(config => { window.__SEEMYGAME_PEER_CONFIG__ = config; }, signaling.config);
   await context.addInitScript(installTelemetry, { expectedSessionMagic: sessionMagic, enableOptical:opticalHz>0, opticalSampleHz:opticalHz||8, opticalReaderMode, opticalSourceWidth:sourceProfile.width });
   // Test fixture state in a fresh profile. No personal account/profile is used.
   await context.addInitScript(() => { localStorage.setItem('seemygame_terms_version', '1.1'); localStorage.setItem('seemygame_terms_accepted', 'true'); });
 };
 const join = async (page, url, name) => {
+  // A second room URL differs only in its hash: force a document navigation so
+  // a reused receiver cannot keep the previous room/session/signaling fixture.
+  if (new URL(page.url()).pathname.endsWith('/room.html')) await page.goto(new URL('/lobby.html', url).href);
   await page.goto(url); await page.locator('#green-room-join-btn').waitFor({ state: 'visible', timeout: 30000 });
   await page.locator('#green-room-user-name').fill(name);
   await page.locator('#green-room-join-btn').click();
@@ -259,6 +270,8 @@ try {
   if (args.includes('--check')) { report.status = 'preflight-only'; console.log('Preflight OK; no capture was started.'); }
   else {
     let localOrigin;
+    report.signalingMode = productionSignaling ? 'production-public' : 'local-fixture';
+    if (productionSignaling && viewerSshHost) throw new Error('Production signaling test does not support fixture SSH forwarding');
     if(viewerSshHost){
       const forwarded=await record('forward fixture and signaling to receiver loopback',()=>startForwardedFixtures({host:viewerSshHost,startAssets:()=>startAssetServer({root,fixtures:{'/e2e-motion.html':fixture}}),startSignaling:startSignalingServer}));
       server=forwarded.assets.server;signaling=forwarded.signaling;reverseTunnel=forwarded.tunnel;localOrigin=forwarded.assets.origin;report.forwardingAttempts=forwarded.attempts;
@@ -268,13 +281,31 @@ try {
     report.webOrigin = webOrigin;
     let nativeOrigin;
     if(senderMode==='native'){
-    const port = await freePort();
+    const port = desktopCdpPort || await freePort();
+    let previousDesktopPages = new Set();
+    if (desktopCdpPort) {
+      if (remoteViewer?.connectionType !== 'cdp' || !remoteViewer.conditions.sameMachine) throw new Error('Shared profile requires a local CDP desktop receiver');
+      nativeBrowser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
+      previousDesktopPages = new Set(nativeBrowser.contexts()[0].pages());
+      if (previousDesktopPages.size !== 1) throw new Error('Shared profile test requires exactly one existing receiver WebView');
+      const receiverPage = [...previousDesktopPages][0];
+      const receiverCdp = await receiverPage.context().newCDPSession(receiverPage);
+      sharedReceiverTargetId = (await receiverCdp.send('Target.getTargetInfo')).targetInfo.targetId;
+      await receiverCdp.detach();
+    }
+    const desktopProfile = resolveDesktopTestProfile(root, desktopProfileOption, path.join(output, 'webview-profile'));
+    await mkdir(desktopProfile, { recursive: true });
+    report.desktopProfile = { path: desktopProfile, sharedCdp: Boolean(desktopCdpPort), nativeAudioMode };
     const env = {
       ...process.env,
       SEEMYGAME_NATIVE_CAPTURE_BACKEND: captureBackend,
-      WEBVIEW2_USER_DATA_FOLDER: path.join(output, 'webview-profile'),
+      WEBVIEW2_USER_DATA_FOLDER: desktopProfile,
       WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS: `--remote-debugging-port=${port} --remote-debugging-address=127.0.0.1 --use-fake-device-for-media-stream --use-fake-ui-for-media-stream --disable-background-timer-throttling --disable-backgrounding-occluded-windows --disable-renderer-backgrounding --disable-features=CalculateNativeWinOcclusion --autoplay-policy=no-user-gesture-required${experimentalHevcReceive?' --enable-features=WebRtcAllowH265Receive':''}`
     };
+    if (desktopCdpPort) {
+      // WebView2 requires identical browser arguments for a shared user-data folder.
+      env.WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = [...remoteViewer.conditions.browserArgs, `--remote-debugging-port=${port}`, '--remote-debugging-address=127.0.0.1', '--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'].join(' ');
+    }
     if (args.includes('--cold-gstreamer-registry')) {
       env.GST_REGISTRY_1_0 = path.join(output, 'gst-registry.bin');
       report.gstreamerRegistry = { mode: 'isolated-cold', path: env.GST_REGISTRY_1_0 };
@@ -288,18 +319,27 @@ try {
       while (Date.now() < deadline) {
         if (spawnError) throw spawnError;
         if (desktop.exitCode !== null) throw new Error(`Desktop exited: ${desktop.exitCode}`);
-        try { nativeBrowser = await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 1000 }); break; } catch { await sleep(400); }
+        try { nativeBrowser ||= await chromium.connectOverCDP(`http://127.0.0.1:${port}`, { timeout: 1000 }); break; } catch { await sleep(400); }
       }
       if (!nativeBrowser) throw new Error('WebView2 CDP indisponível; confira runtime e executável');
       const context = nativeBrowser.contexts()[0]; await isolatedInit(context);
       report.senderBrowserVersion=nativeBrowser.version();
       report.experimentalHevcReceive=experimentalHevcReceive;
-      hostPage = context.pages()[0] || await context.newPage();
+      if (desktopCdpPort) {
+        const deadline = Date.now() + 15000;
+        while (Date.now() < deadline && !hostPage) {
+          hostPage = context.pages().find(page => !previousDesktopPages.has(page));
+          if (!hostPage) await sleep(200);
+        }
+        if (!hostPage) throw new Error('Second desktop instance did not create a new WebView');
+      } else hostPage = context.pages()[0] || await context.newPage();
       // The shipping CSP intentionally rejects arbitrary localhost signaling ports.
       // Scope the bypass to this isolated E2E WebView; do not relax application CSP.
       const cdp = await context.newCDPSession(hostPage);
-      await cdp.send('Page.setBypassCSP', { enabled: true });
-      report.limitations.push('Isolated desktop page bypasses CSP to use ephemeral local signaling; shipping CSP is not validated by this run.');
+      if (!productionSignaling) {
+        await cdp.send('Page.setBypassCSP', { enabled: true });
+        report.limitations.push('Isolated desktop page bypasses CSP to use ephemeral local signaling; shipping CSP is not validated by this run.');
+      }
       watchErrors(hostPage, 'desktop');
       if (!hostPage.url() || hostPage.url() === 'about:blank') {
         await hostPage.waitForURL(u => u && u.href !== 'about:blank', { timeout: 15000 });
@@ -392,6 +432,16 @@ try {
     if(remoteViewer?.connectionType!=='cdp')await viewerContext.grantPermissions(['camera', 'microphone']);
     await isolatedInit(viewerContext);
     viewerPage = remoteViewer?.connectionType==='cdp'?(viewerContext.pages()[0]||await viewerContext.newPage()):await viewerContext.newPage();
+    if (sharedReceiverTargetId) {
+      viewerPage = null;
+      for (const candidate of viewerContext.pages()) {
+        const cdp = await viewerContext.newCDPSession(candidate);
+        const targetId = (await cdp.send('Target.getTargetInfo')).targetInfo.targetId;
+        await cdp.detach();
+        if (targetId === sharedReceiverTargetId) { viewerPage = candidate; break; }
+      }
+      if (!viewerPage) throw new Error('Original receiver WebView was lost');
+    }
     if(receiverViewport)await record('set equal receiver viewport',async()=>{
       await viewerPage.setViewportSize({width:receiverViewport[0],height:receiverViewport[1]});
       const actual=await viewerPage.evaluate(()=>({width:innerWidth,height:innerHeight}));
@@ -401,11 +451,11 @@ try {
     let receiverOrigin=webOrigin;
     if(remoteViewer?.connectionType==='cdp'&&remoteViewer.conditions.runtime==='tauri'){
       await viewerPage.waitForURL(u=>u.href!=='about:blank',{timeout:15000});receiverOrigin=new URL(viewerPage.url()).origin;
-      const cdp=await viewerContext.newCDPSession(viewerPage);await cdp.send('Page.setBypassCSP',{enabled:true});
+      const cdp=await viewerContext.newCDPSession(viewerPage);if(!productionSignaling)await cdp.send('Page.setBypassCSP',{enabled:true});
       await record('check receiver embedded frontend matches checkout',async()=>{
         for(const p of frontendFiles){const embedded=await viewerPage.evaluate(async p=>(await fetch('/'+p)).text(),p);if(!frontendSourceMatches(embedded,await readFile(path.join(root,p),'utf8')))throw new Error('Receiver build desatualizado: '+p);}
       });
-      report.limitations.push('Isolated receiver WebView2 bypasses CSP for ephemeral test signaling; shipping CSP is not validated.');
+      if(!productionSignaling)report.limitations.push('Isolated receiver WebView2 bypasses CSP for ephemeral test signaling; shipping CSP is not validated.');
     }
     watchErrors(viewerPage, 'web');
     const room = `e2e-${randomBytes(6).toString('hex')}`, key = randomBytes(16).toString('hex');
@@ -808,7 +858,7 @@ try {
       await record('select native synthetic window and transmit', async () => {
         const readCapabilities=async()=>({send:RTCRtpSender.getCapabilities('video'),receive:RTCRtpReceiver.getCapabilities('video')});
         report.codecCapabilities={host:await hostPage.evaluate(readCapabilities),viewer:await viewerPage.evaluate(readCapabilities)};
-        await hostPage.locator('#audio-mode-select').selectOption('none', { force: true });
+        await hostPage.locator('#audio-mode-select').selectOption(nativeAudioMode, { force: true });
         await hostPage.locator('#quality-preset').selectOption(preset, { force: true });
         report.selectedNativePreset=await hostPage.locator('#quality-preset').inputValue();
         if(report.selectedNativePreset!==preset)throw new Error('Native quality preset was not applied');
@@ -1168,8 +1218,10 @@ try {
       });
     }
 
-    const functionalPassed = true;
     const primaryResult=senderMode==='web'?webResult:nativeResult;
+    report.videoContinuity = [primaryResult, ...(isCompareMode ? [webResult] : [])].map(result => assessVideoContinuity(result.timeline));
+    const functionalPassed = report.videoContinuity.every(result => result.passed);
+    report.checks.push({ name: 'receiver video keeps presenting frames throughout sampling', status: functionalPassed ? 'passed' : 'failed' });
     const measurementValid = isCompareMode
       ? (report.comparison?.verdict?.measurementValid ?? false)
       : (primaryResult.diagnostics.measurementValid);
@@ -1202,6 +1254,10 @@ finally {
   if (desktop) {
     const log = await readFile(path.join(path.dirname(exe), 'native_debug.log')).catch(() => Buffer.alloc(0));
     if (log.length > nativeLogSize) await writeFile(path.join(output, 'native-debug.log'), log.subarray(nativeLogSize));
+    report.instanceProfile = readInstanceProfileEvidence(log.subarray(nativeLogSize).toString());
+    if (args.includes('--expect-profile-isolation') && report.instanceProfile?.mode !== 'isolated-secondary') {
+      report.status = 'failed'; report.error = 'Expected automatic secondary WebView2 profile isolation was not observed';
+    }
     report.backendEvidence=readCaptureBackendEvidence(log.subarray(nativeLogSize).toString(),captureBackend);
     if(report.native&&!report.backendEvidence.matched){
       report.status='failed';report.error='Actual native capture backend could not be verified against requested backend';

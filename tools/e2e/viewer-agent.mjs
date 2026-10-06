@@ -1,5 +1,6 @@
 // Run on the receiving computer. Browser and resource control bind only to loopback.
 import {chromium} from 'playwright';
+import {resolveDesktopTestProfile} from './harness/desktop-profile.mjs';
 import http from 'node:http';
 import os from 'node:os';
 import {randomUUID} from 'node:crypto';
@@ -34,11 +35,12 @@ try {
  }
  resources=await startResourceSampler({enabled:!process.argv.includes('--no-system-metrics')});
  const browserArgs=browserConfig==='harness'?['--disable-background-timer-throttling','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding','--disable-features=CalculateNativeWinOcclusion','--autoplay-policy=no-user-gesture-required','--window-position=30,30','--window-size=1280,800']:['--window-position=30,30','--window-size=1280,800'];
+ if(process.argv.includes('--software-video-decode'))browserArgs.push('--disable-accelerated-video-decode');
  if(diagnosticIce){const at=browserArgs.findIndex(arg=>arg.startsWith('--disable-features='));if(at>=0)browserArgs[at]+=',WebRtcHideLocalIpsWithMdns';else browserArgs.push('--disable-features=WebRtcHideLocalIpsWithMdns');}
  if(resourcesOnly){/* Same resource collector in native receiver cases, no browser. */}
  else if(runtime==='tauri'){
   const exe=path.resolve(option('--exe',path.join(root,'src-tauri/target/release/seemygame.exe')));await stat(exe);
-  const profile=path.join(root,'output/playwright',`viewer-profile-${randomUUID()}`);await mkdir(profile,{recursive:true});
+  const profile=resolveDesktopTestProfile(root,option('--desktop-profile',null),path.join(root,'output/playwright',`viewer-profile-${randomUUID()}`));await mkdir(profile,{recursive:true});
   desktop=spawn(exe,[],{cwd:path.dirname(exe),windowsHide:false,stdio:'ignore',env:{...process.env,PATH:[path.join(root,'native-media/gstreamer/bin'),process.env.PATH].filter(Boolean).join(path.delimiter),WEBVIEW2_USER_DATA_FOLDER:profile,WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS:[...browserArgs,`--remote-debugging-port=${port}`,'--remote-debugging-address=127.0.0.1','--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream'].join(' ')}});
   let spawnError;desktop.on('error',e=>{spawnError=e;});
   const deadline=Date.now()+30000;let ready=false;
