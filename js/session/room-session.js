@@ -62,6 +62,7 @@ import { toggleCoopCardControl } from '../coop/card-action.js';
 import { bindRoomIdentity } from './room-identity.js';
 import { bindRoomSettings } from './room-settings.js';
 import { bindRoomVoiceState } from './room-voice-state.js';
+import { createCoordinatorReconnect } from './coordinator-reconnect.js';
 import { registerSessionFeatures } from '../plugins/session-composition.js';
 import { createCoopController } from '../coop/controller.js';
 
@@ -95,6 +96,7 @@ const roomState = {
   captureProvider: null,
   remoteStreams: new Map(),
   screenCalls: new Map(),
+  pendingVoiceChannelId: null,
   messageHandlers: null
 };
 
@@ -177,12 +179,19 @@ async function setupRoomSession(peerId, session = roomState.session) {
   roomState.roomManager = rm;
   bindRoomVoiceState(session, { roomManager: rm, voiceManager });
   const syncVoice = () => roomState.messageHandlers?.syncVoicePeers();
-  const onChannels = () => roomState.discordUI?.renderRoomChannels();
+  const onChannels = () => {
+    if (roomState.pendingVoiceChannelId && !rm.voiceChannels.has(roomState.pendingVoiceChannelId)) {
+      leaveRoomVoice(rm, session, { preserveControls: true });
+    }
+    roomState.discordUI?.renderRoomChannels();
+  };
+  const onChannelRemoved = () => leaveRoomVoice(rm, session, { preserveControls: true });
   const onChannelError = ({ message }) => showToast(message, 'error');
   rm.on('membersUpdated', syncVoice);
   rm.on('voiceChannelsUpdated', onChannels);
+  rm.on('voiceChannelRemoved', onChannelRemoved);
   rm.on('voiceChannelError', onChannelError);
-  session.registerCleanup(() => { rm.off('membersUpdated', syncVoice); rm.off('voiceChannelsUpdated', onChannels); rm.off('voiceChannelError', onChannelError); });
+  session.registerCleanup(() => { rm.off('membersUpdated', syncVoice); rm.off('voiceChannelsUpdated', onChannels); rm.off('voiceChannelRemoved', onChannelRemoved); rm.off('voiceChannelError', onChannelError); });
   const submitPinBtn = document.getElementById('viewer-pin-submit-btn');
   const cancelPinBtn = document.getElementById('viewer-pin-cancel-btn');
   const pinInput = document.getElementById('viewer-pin-input');
@@ -272,6 +281,15 @@ async function setupRoomSession(peerId, session = roomState.session) {
 
   rm.on('memberLeft', (member) => {
     if (member && member.peerId) {
+      closeRoomScreenCalls(member.peerId, session);
+      // ROOM_MEMBER_LEFT can remove the map entry before DataConnection's
+      // close event, so that event's current-connection guard may ignore it.
+      if (member.peerId === rm.masterPeerId && !rm.isMaster && rm.isInRoom && !session?.isDisposed) {
+        const conn = roomState.coordinatorConn;
+        roomState.coordinatorConn = null;
+        try { conn?.close(); } catch (_) {}
+        roomState.scheduleCoordinatorReconnect?.();
+      }
       removeVideoCard(member.peerId);
       (session?.eventBus || globalBus).emit('room:memberLeft', member);
     }
@@ -316,44 +334,12 @@ async function setupRoomSession(peerId, session = roomState.session) {
   };
   roomState.requestRoomJoin = joinCoordinator;
 
-  let coordinatorReconnectTimer = null;
-  const scheduleCoordinatorReconnect = () => {
-    if (coordinatorReconnectTimer || session?.isDisposed || rm.isMaster || !rm.isInRoom) return;
-    let attempts = 0;
-    const MAX_RECONNECT_ATTEMPTS = 15;
-    const tryReconnect = () => {
-      coordinatorReconnectTimer = null;
-      if (session?.isDisposed || rm.isMaster || !rm.isInRoom) return;
-      if (roomState.coordinatorConn && roomState.coordinatorConn.open) return;
-      attempts++;
-      console.log(`[Room] Tentando reconectar ao Coordenador Master (${attempts}/${MAX_RECONNECT_ATTEMPTS})...`);
-      const conn = joinCoordinator(roomState.currentPin || roomPin);
-      if (!conn) return;
-      conn.on('open', () => {
-        console.log('[Room] Reconectado com sucesso ao Coordenador Master!');
-        if (roomState.localStream) {
-          rm.setLocalStreaming(true, { ...rm.localStreamingState });
-        }
-      });
-      const onFail = () => {
-        if (attempts < MAX_RECONNECT_ATTEMPTS && !session?.isDisposed && rm.isInRoom && !rm.isMaster) {
-          const delay = Math.min(1000 + 500 * attempts, 4000);
-          coordinatorReconnectTimer = setTimeout(tryReconnect, delay);
-        }
-      };
-      conn.on('error', onFail);
-      conn.on('close', () => {
-        if (!roomState.coordinatorConn?.open) onFail();
-      });
-    };
-    coordinatorReconnectTimer = setTimeout(tryReconnect, 1000);
-    session?.registerCleanup(() => {
-      if (coordinatorReconnectTimer) {
-        clearTimeout(coordinatorReconnectTimer);
-        coordinatorReconnectTimer = null;
-      }
-    });
-  };
+  const scheduleCoordinatorReconnect = createCoordinatorReconnect(session, {
+    roomManager: rm,
+    getConnection: () => roomState.coordinatorConn,
+    connect: () => joinCoordinator(roomState.currentPin || roomPin),
+    onConnected: () => { if (roomState.localStream) rm.setLocalStreaming(true, { ...rm.localStreamingState }); }
+  });
   roomState.scheduleCoordinatorReconnect = scheduleCoordinatorReconnect;
 
   // Vincula controlador de UI Discord
@@ -451,6 +437,9 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
         name: rm.userName,
         clientSessionId: rm.clientSessionId,
         voiceChannelId: rm.voiceChannelId,
+        isMuted: voiceManager.isMuted,
+        isDeafened: voiceManager.isDeafened,
+        isSpeaking: Boolean(voiceManager.isInVoice && !voiceManager.isMuted && voiceManager.localVad.isSpeaking),
         isStreaming: Boolean(roomState.localStream),
         streamDetails: roomState.localStream ? { ...rm.localStreamingState } : null
       });
@@ -506,8 +495,11 @@ function handleRoomMediaCall(call, rm, session) {
   }
   call.answer();
   const previousCall = roomState.remoteStreams.get(call.peer)?.call;
+  if (previousCall) {
+    releaseRoomRemoteStream(call.peer, previousCall, session);
+    try { previousCall.close(); } catch (_) {}
+  }
   roomState.remoteStreams.set(call.peer, { call, stream: null });
-  try { previousCall?.close(); } catch (_) {}
   call.on('stream', (stream) => {
     if (session?.isDisposed || !rm.isPeerAuthorized(call.peer) || roomState.remoteStreams.get(call.peer)?.call !== call) return;
     roomState.remoteStreams.set(call.peer, { call, stream });
@@ -519,13 +511,35 @@ function handleRoomMediaCall(call, rm, session) {
       onCoopClick: peerId => toggleCoopCardControl(coopController, peerId, rm.meshConnections.get(peerId)) });
     session?.eventBus.emit('stream:received', { hostId: call.peer, stream });
   });
-  call.on('close', () => {
-    if (roomState.remoteStreams.get(call.peer)?.call !== call) return;
-    roomState.remoteStreams.delete(call.peer);
-    stopStatsMonitor(call.peer);
-    removeVideoCard(call.peer);
-    session?.eventBus.emit('stream:stopped', { sourceId: call.peer });
-  });
+  let unregisterCleanup;
+  const release = () => { unregisterCleanup?.(); releaseRoomRemoteStream(call.peer, call, session); };
+  unregisterCleanup = session?.registerCleanup(() => { release(); try { call.close(); } catch (_) {} });
+  call.on('close', release);
+  call.on('error', () => { release(); try { call.close(); } catch (_) {} });
+}
+
+function releaseRoomRemoteStream(peerId, call, session) {
+  const entry = roomState.remoteStreams.get(peerId);
+  if (entry?.call !== call) return;
+  roomState.remoteStreams.delete(peerId);
+  entry.stream?.getTracks().forEach(track => { try { track.stop(); } catch (_) {} });
+  stopStatsMonitor(peerId);
+  removeVideoCard(peerId);
+  session?.eventBus.emit('stream:stopped', { sourceId: peerId });
+}
+
+function closeRoomScreenCalls(peerId, session) {
+  const outgoing = roomState.screenCalls.get(peerId);
+  try { outgoing?.close(); } catch (_) {}
+  if (roomState.screenCalls.get(peerId) === outgoing) {
+    roomState.screenCalls.delete(peerId);
+    stopStatsMonitor(`send-${peerId}`);
+  }
+  const incoming = roomState.remoteStreams.get(peerId)?.call;
+  if (incoming) {
+    releaseRoomRemoteStream(peerId, incoming, session);
+    try { incoming.close(); } catch (_) {}
+  }
 }
 
 function sendRoomStream(memberId, conn, rm, session) {
@@ -562,12 +576,16 @@ function sendRoomStream(memberId, conn, rm, session) {
 async function joinRoomVoice(rm, session, channelId = 'voice-1') {
   if (!rm || !rm.voiceChannels.has(channelId) || session?.isDisposed) return;
   if (voiceManager.isInVoice && rm.voiceChannelId === channelId) return;
-  leaveRoomVoice(rm, session);
+  leaveRoomVoice(rm, session, { preserveControls: true });
   const epoch = roomState.voiceJoinEpoch;
+  roomState.pendingVoiceChannelId = channelId;
   try {
     const stream = await voiceManager.joinVoice({ peerId: rm.myPeerId, name: rm.userName, role: rm.isMaster ? 'host' : 'member' });
     if (session?.isDisposed || epoch !== roomState.voiceJoinEpoch || !stream || !voiceManager.isInVoice) return;
-    rm.setLocalVoiceChannel(channelId);
+    if (!rm.setLocalVoiceChannel(channelId)) {
+      leaveRoomVoice(rm, session, { preserveControls: true });
+      return;
+    }
     roomState.discordUI?.renderRoomChannels();
     rm.broadcast({ type: 'VOICE_SIGNAL', action: 'VOICE_JOINED', voiceChannelId: channelId, peerId: rm.myPeerId, name: rm.userName, role: rm.isMaster ? 'host' : 'member' });
     for (const [memberId, conn] of rm.meshConnections) {
@@ -576,16 +594,24 @@ async function joinRoomVoice(rm, session, channelId = 'voice-1') {
       handlers?.connectVoiceTo(memberId);
     }
   } catch (error) {
-    showToast('Não foi possível acessar o microfone.', 'error');
+    if (!session?.isDisposed && epoch === roomState.voiceJoinEpoch) showToast('Não foi possível acessar o microfone.', 'error');
+  } finally {
+    if (epoch === roomState.voiceJoinEpoch) roomState.pendingVoiceChannelId = null;
   }
 }
 
-function leaveRoomVoice(rm, session) {
+function leaveRoomVoice(rm, session, { preserveControls = false } = {}) {
+  const { isDeafened } = voiceManager.getLocalVoiceState();
+  const isManuallyMuted = voiceManager.isManuallyMuted;
   roomState.voiceJoinEpoch = (roomState.voiceJoinEpoch || 0) + 1;
+  roomState.pendingVoiceChannelId = null;
   const handlers = session?.messageHandlers || roomState.messageHandlers;
-  handlers?.activeVoiceCalls.forEach((call) => { try { call.close(); } catch (_) {} });
-  handlers?.activeVoiceCalls.clear();
+  handlers?.closeVoiceCalls();
   voiceManager.leaveVoice();
+  if (preserveControls) {
+    voiceManager.setMuted(isManuallyMuted);
+    voiceManager.setDeafened(isDeafened);
+  }
   rm?.setLocalVoiceChannel(null);
   rm?.broadcast({ type: 'VOICE_SIGNAL', action: 'LEAVE', peerId: rm.myPeerId });
   roomState.discordUI?.renderRoomChannels();
@@ -973,9 +999,9 @@ async function initRoomApp(options = {}) {
       roomState.discordUI = null;
       roomState.coordinatorConn = null;
       roomState.screenCalls.clear();
-      roomState.remoteStreams.clear();
       if (roomState.session === session) roomState.session = null;
       session.dispose();
+      roomState.remoteStreams.clear();
     },
     startCapture: options => startRoomCapture(roomState.roomManager, session, options),
     stopCapture: () => stopRoomCapture(roomState.roomManager, session),
