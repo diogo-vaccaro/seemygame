@@ -63,13 +63,7 @@ setColor(hexColor) {
     this.currentColor = hexColor;
     if (this.selectedElementId) {
       const el = this.elements.find(e => e.id === this.selectedElementId);
-      if (el) {
-        el.color = hexColor;
-        this.render();
-        if (typeof this.onElementUpdated === 'function') {
-          this.onElementUpdated(el);
-        }
-      }
+      if (el && el.color !== hexColor) this.updateElement({ ...el, color: hexColor });
     }
   }
 
@@ -77,13 +71,7 @@ setStrokeWidth(width) {
     this.currentWidth = Number(width) || 4;
     if (this.selectedElementId) {
       const el = this.elements.find(e => e.id === this.selectedElementId);
-      if (el) {
-        el.strokeWidth = this.currentWidth;
-        this.render();
-        if (typeof this.onElementUpdated === 'function') {
-          this.onElementUpdated(el);
-        }
-      }
+      if (el && el.strokeWidth !== this.currentWidth) this.updateElement({ ...el, strokeWidth: this.currentWidth });
     }
   }
 
@@ -91,13 +79,7 @@ setFill(fillMode) {
     this.currentFill = fillMode;
     if (this.selectedElementId) {
       const el = this.elements.find(e => e.id === this.selectedElementId);
-      if (el && el.type !== 'pencil' && el.type !== 'line' && el.type !== 'text' && el.type !== 'formula' && el.type !== 'image') {
-        el.fill = fillMode;
-        this.render();
-        if (typeof this.onElementUpdated === 'function') {
-          this.onElementUpdated(el);
-        }
-      }
+      if (el && el.fill !== fillMode && el.type !== 'pencil' && el.type !== 'line' && el.type !== 'text' && el.type !== 'formula' && el.type !== 'image') this.updateElement({ ...el, fill: fillMode });
     }
   }
 
