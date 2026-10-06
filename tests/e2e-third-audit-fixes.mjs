@@ -129,7 +129,7 @@ try {
     await p.goto(server.origin + '/viewer.html#watch=' + hostId);
     await wait(p, async () => (await import('/js/entries/viewer-entry.js')).viewerState.remoteStream);
   }
-  for (const p of relayPages) await p.locator('#dock-whiteboard-btn').click();
+  for (const p of relayPages) await p.locator('#toggle-whiteboard-btn').click();
   const managerState = p => p.evaluate(async () => {
     const s = location.pathname.includes('streamer') ? (await import('/js/entries/streamer-entry.js')).streamerState : (await import('/js/entries/viewer-entry.js')).viewerState;
     return s.features.whiteboard.manager.elements.map(e => e.id);
