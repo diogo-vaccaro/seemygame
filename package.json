@@ -30,6 +30,7 @@
     "test:e2e:room-channels": "node tests/e2e-room-channels.mjs",
     "test:e2e:voice-fixes": "node tests/e2e-current-voice-fixes.mjs",
     "test:e2e:new-bug-fixes": "node tests/e2e-new-bug-fixes.mjs",
+    "test:e2e:room-quality": "node tests/e2e-room-quality.mjs",
     "test:e2e:room-findings": "node tests/e2e-room-findings.mjs",
     "test:e2e:audit-fixes": "node tests/e2e-audit-fixes.mjs",
     "test:e2e:historical": "node tools/e2e/historical-suite.mjs",

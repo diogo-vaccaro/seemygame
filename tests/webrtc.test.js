@@ -214,7 +214,7 @@ describe('Módulo: webrtc.js', () => {
       await expect(applySenderOptimizations(null, 7500000)).resolves.not.toThrow();
     });
 
-    it('deve configurar trava de 60 FPS, contentHint motion e degradationPreference maintain-framerate', async () => {
+    it('deve configurar trava de 60 FPS, contentHint motion e degradationPreference maintain-resolution por padrão', async () => {
       const videoTrack = new MockMediaStreamTrack('video');
       const sender = new MockRTCRtpSender(videoTrack);
       const setParamsSpy = vi.spyOn(sender, 'setParameters');
@@ -229,11 +229,28 @@ describe('Módulo: webrtc.js', () => {
       expect(setParamsSpy).toHaveBeenCalled();
 
       const passedParams = setParamsSpy.mock.calls[0][0];
-      expect(passedParams.degradationPreference).toBe('maintain-framerate');
+      expect(passedParams.degradationPreference).toBe('maintain-resolution');
       expect(passedParams.encodings[0].maxFramerate).toBe(60);
       expect(passedParams.encodings[0].maxBitrate).toBe(9000000);
       expect(passedParams.encodings[0].priority).toBe('high');
       expect(passedParams.encodings[0].networkPriority).toBe('high');
+    });
+
+    it('deve permitir configurar explicitamente degradationPreference para maintain-framerate ou balanced', async () => {
+      const videoTrack = new MockMediaStreamTrack('video');
+      const sender = new MockRTCRtpSender(videoTrack);
+      const setParamsSpy = vi.spyOn(sender, 'setParameters');
+
+      const pc = {
+        getSenders: () => [sender]
+      };
+
+      await applySenderOptimizations(pc, 9000000, 60, 1, 'maintain-framerate');
+      expect(setParamsSpy.mock.calls[0][0].degradationPreference).toBe('maintain-framerate');
+
+      setParamsSpy.mockClear();
+      await applySenderOptimizations(pc, 9000000, 60, 1, 'balanced');
+      expect(setParamsSpy.mock.calls[0][0].degradationPreference).toBe('balanced');
     });
 
     it('não deve modificar senders de faixas que não sejam de vídeo', async () => {

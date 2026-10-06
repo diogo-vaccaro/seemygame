@@ -58,7 +58,7 @@ it('restaura e persiste codec/encoder/API separados e os envia nas configuraçõ
 });
 it('troca pendente de encoder/API não reconfigura o worker e não vaza para uma alteração de bitrate', async () => {
   document.body.insertAdjacentHTML('beforeend', '<input id="bitrate-slider" value="4500">');
-  const provider = { session: { sessionId: 'live', videoCodec: 'h264', h264Encoder: 'nvenc', captureBackend: 'd3d12' }, requestedSettings: { h264Encoder: 'auto', captureBackend: 'auto' }, reconfigure: vi.fn().mockResolvedValue({}) };
+  const provider = { session: { provider: 'native', sessionId: 'live', videoCodec: 'h264', h264Encoder: 'nvenc', captureBackend: 'd3d12' }, requestedSettings: { h264Encoder: 'auto', captureBackend: 'auto' }, reconfigure: vi.fn().mockResolvedValue({}) };
   const toast = vi.fn(); bindCaptureSettings(session, () => provider, toast);
   change('h264-encoder-select', 'cpu'); change('capture-backend-select', 'd3d11'); change('capture-method-select', 'dxgi');
   expect(provider.reconfigure).not.toHaveBeenCalled(); expect(toast).toHaveBeenCalledTimes(3);
@@ -80,7 +80,7 @@ it('persiste DXGI independentemente da API gráfica e esclarece o compartilhamen
 });
 it('preserva o método ativo ao reconfigurar bitrate com uma preferência diferente pendente', async () => {
   document.body.insertAdjacentHTML('beforeend', '<input id="bitrate-slider" value="4500">');
-  const provider = { session: { sessionId: 'live', captureApi: 'dxgi' }, requestedSettings: { captureApi: 'dxgi' }, reconfigure: vi.fn().mockResolvedValue({}) };
+  const provider = { session: { provider: 'native', sessionId: 'live', captureApi: 'dxgi' }, requestedSettings: { captureApi: 'dxgi' }, reconfigure: vi.fn().mockResolvedValue({}) };
   bindCaptureSettings(session, () => provider, vi.fn());
   change('capture-method-select', 'auto');
   change('bitrate-slider', '5000');
@@ -93,4 +93,14 @@ it('ajuda abre com foco, fecha com Escape e remove listeners ao encerrar a sess�
   document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
   expect(select('encoder-help').hidden).toBe(true);
   await session.dispose(); button.blur(); button.focus(); expect(select('encoder-help').hidden).toBe(true);
+});
+
+it('persiste a preferência de adaptação de resolução e a envia nas configurações de captura', async () => {
+  localStorage.setItem('seemygame_degradation_preference', 'maintain-resolution');
+  bindStreamingOptions(session, { desktop: false });
+  expect(select('degradation-preference-select').value).toBe('maintain-resolution');
+  expect(readCaptureSettings()).toMatchObject({ degradationPreference: 'maintain-resolution' });
+  change('degradation-preference-select', 'maintain-framerate');
+  expect(localStorage.getItem('seemygame_degradation_preference')).toBe('maintain-framerate');
+  expect(readCaptureSettings()).toMatchObject({ degradationPreference: 'maintain-framerate' });
 });
