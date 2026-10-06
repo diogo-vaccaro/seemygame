@@ -13,6 +13,7 @@ fn latest_policy_only_changes_the_two_pre_encode_video_queues() {
     for backend in [CaptureBackend::D3d11, CaptureBackend::D3d12] {
         for fps in [30, 60, 120] {
             let bounded = MediaWorkerConfig {
+                raw_video_queue: RawVideoQueuePolicy::Bounded,
                 capture_backend: backend, h264_encoder: H264EncoderBackend::Nvenc,
                 audio_mode: AudioMode::System, fps, ..Default::default()
             };

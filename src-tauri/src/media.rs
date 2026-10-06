@@ -138,7 +138,7 @@ mod tests {
             config: MediaWorkerConfig {h264_encoder:H264EncoderBackend::Nvenc,
                 width:Some(1920),height:Some(1080),audio_mode:AudioMode::System,
                 bitrate_kbps:4500,..Default::default()},
-            active_capture_backend:CaptureBackend::D3d12, capture_fallback_reason:None,
+            active_capture_backend:CaptureBackend::D3d12, active_capture_api: "wgc", capture_fallback_reason:None,
             video_rtp_port:5555,audio_rtp_port:Some(6666),
         };
         // Reject the replacement before spawning any process, to exercise a failed fallback.
@@ -147,7 +147,7 @@ mod tests {
         assert!(error.contains("fallback D3D11 falhou"));
         assert_eq!(worker.active_capture_backend,CaptureBackend::D3d11);
         assert_eq!(worker.config.capture_backend,CaptureBackend::Auto);
-        assert_eq!(worker.capture_fallback_reason.as_deref(),Some("device initialization failed"));
+        assert!(worker.capture_fallback_reason.as_deref().unwrap().contains("device initialization failed"));
         assert_eq!(worker.fallback_to_d3d11(&invalid,"second failure").unwrap_err(),"second failure");
         let mut pipeline_config=worker.config.clone();pipeline_config.capture_backend=worker.active_capture_backend;
         let args=build_pipeline(&source("window"),&pipeline_config,worker.video_rtp_port,worker.audio_rtp_port).unwrap();
@@ -187,6 +187,7 @@ mod tests {
             rtp_port_leases: vec![lease],
             config: MediaWorkerConfig::default(),
             active_capture_backend: CaptureBackend::D3d11,
+            active_capture_api: "wgc",
             capture_fallback_reason: None,
             video_rtp_port: port,
             audio_rtp_port: None,

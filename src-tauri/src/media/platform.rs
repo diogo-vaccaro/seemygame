@@ -35,6 +35,18 @@ pub(crate) fn process_loopback_supported() -> bool {
 }
 
 #[cfg(windows)]
+#[link(name = "gdi32")]
+unsafe extern "system" {
+    fn D3DKMTSetProcessSchedulingPriorityClass(
+        process: *mut std::ffi::c_void,
+        class: u32,
+    ) -> i32;
+    fn D3DKMTGetProcessSchedulingPriorityClass(
+        process: *mut std::ffi::c_void,
+        class: *mut u32,
+    ) -> i32;
+}
+
 pub(crate) fn assign_child_to_job_object(child: &Child) {
     use std::os::windows::io::AsRawHandle;
     use windows::Win32::Foundation::HANDLE;
@@ -71,14 +83,21 @@ pub(crate) fn assign_child_to_job_object(child: &Child) {
         unsafe {
             let job_handle = HANDLE(stored as *mut std::ffi::c_void);
             let proc_handle = HANDLE(child.as_raw_handle());
-            let _ = windows::Win32::System::Threading::SetPriorityClass(
+            let cpu_high_applied = windows::Win32::System::Threading::SetPriorityClass(
                 proc_handle,
                 windows::Win32::System::Threading::HIGH_PRIORITY_CLASS,
-            );
+            ).is_ok();
+            // Request process HIGH and read it back; this does not guarantee
+            // per-device/per-queue priority or FPS under GPU saturation.
+            let gpu_status = D3DKMTSetProcessSchedulingPriorityClass(proc_handle.0, 4);
+            let mut after = 0;
+            let read_status = D3DKMTGetProcessSchedulingPriorityClass(proc_handle.0, &mut after);
+            let gpu_high_applied = gpu_status == 0 && read_status == 0 && after == 4;
+            log::info!("[Capture Priority] Worker CPU high applied={cpu_high_applied}; GPU requested=4, effective={after}, applied={gpu_high_applied}, set_status={gpu_status}, read_status={read_status}");
             if let Err(e) = AssignProcessToJobObject(job_handle, proc_handle) {
                 log::warn!("[JobObject] Falha ao associar processo ao Job Object: {e:?}");
             } else {
-                log::info!("[JobObject] Processo worker GStreamer associado ao Job Object com HIGH_PRIORITY_CLASS");
+                log::info!("[JobObject] Processo worker GStreamer associado ao Job Object");
             }
         }
     }

@@ -90,6 +90,7 @@ pub(crate) fn build_pipeline(
         "!".to_string(),
         "videorate".to_string(),
         "drop-only=true".to_string(),
+        "skip-to-first=true".to_string(),
         "!".to_string(),
         format!(
             "video/x-raw(memory:{memory}),framerate={}/1",

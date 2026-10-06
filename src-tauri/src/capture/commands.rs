@@ -230,7 +230,7 @@ pub fn start_native_capture(
         video_codec: Some(worker.config.codec.as_str().to_string()),
         h264_encoder: Some(worker.config.h264_encoder.as_str().to_string()),
         capture_backend: Some(worker.active_capture_backend.as_str().to_string()),
-        capture_api: Some(media::capture_api_for_source(&validated, worker.config.capture_api.as_deref())?.to_string()),
+        capture_api: Some(worker.active_capture_api.to_string()),
         capture_fallback_reason: worker.capture_fallback_reason.clone(),
         video_rtp_port: Some(worker.video_rtp_port),
         audio_rtp_port: worker.audio_rtp_port,
@@ -286,8 +286,10 @@ pub(crate) fn spawn_worker_health_monitor(app: &AppHandle, session_id: String) {
                         match worker.health_error(&session.validated_source) {
                             Ok(()) => {
                                 let backend = Some(worker.active_capture_backend.as_str().to_string());
-                                if session.state.capture_backend != backend {
+                                let method = Some(worker.active_capture_api.to_string());
+                                if session.state.capture_backend != backend || session.state.capture_api != method {
                                     session.state.capture_backend = backend;
+                                    session.state.capture_api = method;
                                     session.state.capture_fallback_reason = worker.capture_fallback_reason.clone();
                                     state_event = Some(session.state.clone());
                                 }
@@ -405,8 +407,9 @@ pub fn reconfigure_native_capture(
 
     if let Some(preference) = capture_api.as_deref() {
         let requested = media::capture_api_for_source(&session.validated_source, Some(preference))?;
-        let active = media::capture_api_for_source(&session.validated_source, session.worker.as_ref().unwrap().config.capture_api.as_deref())?;
-        if requested != active {
+        let worker = session.worker.as_ref().unwrap();
+        let same_preference = media::CaptureApi::parse(preference)? == media::CaptureApi::parse(worker.config.capture_api.as_deref().unwrap_or("auto"))?;
+        if !same_preference && requested != worker.active_capture_api {
             return Err("A troca de método de captura requer reiniciar a transmissão.".into());
         }
     }
@@ -553,7 +556,7 @@ pub fn reconfigure_native_capture(
         video_codec: Some(new_worker.config.codec.as_str().to_string()),
         h264_encoder: Some(new_worker.config.h264_encoder.as_str().to_string()),
         capture_backend: Some(new_worker.active_capture_backend.as_str().to_string()),
-        capture_api: Some(media::capture_api_for_source(&session.validated_source, new_worker.config.capture_api.as_deref())?.to_string()),
+        capture_api: Some(new_worker.active_capture_api.to_string()),
         capture_fallback_reason: new_worker.capture_fallback_reason.clone(),
         video_rtp_port: Some(video_rtp_port),
         audio_rtp_port: target_audio_rtp_port,
@@ -604,6 +607,7 @@ pub fn set_native_capture_audio_mode(
             worker.restart_audio_mode(&session.validated_source, parsed_mode)?;
             session.state.audio_rtp_port = worker.audio_rtp_port;
             session.state.capture_backend = Some(worker.active_capture_backend.as_str().to_string());
+            session.state.capture_api = Some(worker.active_capture_api.to_string());
             session.state.capture_fallback_reason = worker.capture_fallback_reason.clone();
         }
     }

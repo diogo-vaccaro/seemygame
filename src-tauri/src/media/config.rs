@@ -168,12 +168,23 @@ impl CaptureApi {
         }
     }
 
-    /// Auto deliberately keeps WGC until monitor DXGI completes E2E validation.
+    /// Auto initially selects DXGI for monitors and WGC for windows.
+    /// The worker can recover monitor acquisition with WGC; no FPS guarantee.
     pub fn resolve(self, source: &ValidatedSource) -> Result<&'static str, String> {
         if self == Self::Dxgi && (source.source_type != "monitor" || source.monitor_handle.is_none() || source.hwnd.is_some()) {
             return Err("DXGI captura somente o monitor inteiro. Para compartilhar uma janela, escolha WGC ou Automático.".into());
         }
-        Ok(if self == Self::Dxgi { "dxgi" } else { "wgc" })
+        match self {
+            Self::Dxgi => Ok("dxgi"),
+            Self::Wgc => Ok("wgc"),
+            Self::Auto => {
+                if source.source_type == "monitor" && source.monitor_handle.is_some() && source.hwnd.is_none() {
+                    Ok("dxgi")
+                } else {
+                    Ok("wgc")
+                }
+            }
+        }
     }
 }
 
