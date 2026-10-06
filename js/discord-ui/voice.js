@@ -326,6 +326,7 @@ updateVoiceControls(state) {
       quickDeafBtn.classList.toggle('active-muted', Boolean(state.isDeafened));
       quickDeafBtn.innerHTML = state.isDeafened ? '🎧❌' : '🎧';
     }
+    if (this.elements.roomChannels) this.renderRoomChannels();
 
     if (this.elements.voiceSelfMicSlider && typeof state.inputVolume === 'number') {
       this.elements.voiceSelfMicSlider.value = state.inputVolume;

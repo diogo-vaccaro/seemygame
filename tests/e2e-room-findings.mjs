@@ -43,9 +43,9 @@ try {
       const ids = await Promise.all(pages.map(page => page.evaluate(async () => (await import('/js/entries/room-entry.js')).roomState.peer.id)));
       const lower = ids[0].localeCompare(ids[1]) < 0 ? 0 : 1;
       const first = order === 'lower-first' ? lower : 1 - lower;
-      await pages[first].locator('#dock-mic-btn').click();
+      await pages[first].locator('[data-voice-channel="voice-1"]').click();
       await wait(pages[first], async () => (await import('/js/entries/room-entry.js')).roomState.session.services.voiceManager.isInVoice);
-      await pages[1 - first].locator('#dock-mic-btn').click();
+      await pages[1 - first].locator('[data-voice-channel="voice-1"]').click();
       for (const page of pages) await wait(page, async () => {
         const { roomState } = await import('/js/entries/room-entry.js');
         return [...roomState.session.services.voiceManager.participants.values()].some(p => !p.isLocal && p.stream)

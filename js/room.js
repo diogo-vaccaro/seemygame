@@ -6,7 +6,8 @@ export * from './room/shared.js';
 import { withRoomManagerAdmission } from './room/admission.js';
 import { withRoomManagerMessageHandlers } from './room/message-handlers.js';
 import { withRoomManagerPresence } from './room/presence.js';
-export class RoomManager extends withRoomManagerPresence(withRoomManagerMessageHandlers(withRoomManagerAdmission(class {}))) {
+import { withRoomVoiceChannels, DEFAULT_VOICE_CHANNELS } from './room/voice-channels.js';
+export class RoomManager extends withRoomVoiceChannels(withRoomManagerPresence(withRoomManagerMessageHandlers(withRoomManagerAdmission(class {})))) {
 constructor({ roomId = 'general', userName = null, clientSessionId = null, roomPin = null, roomKey = null, onStateChange } = {}) {
     super();
     this.roomId = sanitizeRoomId(roomId);
@@ -20,6 +21,9 @@ constructor({ roomId = 'general', userName = null, clientSessionId = null, roomP
     this.masterPeerId = getRoomMasterPeerId(this.roomId, this.roomKey);
     this.isInRoom = false;
     this.myPeerId = null;
+    this.voiceChannelId = null;
+    this.voiceChannels = new Map(DEFAULT_VOICE_CHANNELS.map(c => [c.id, { ...c }]));
+    this.voiceChannelsRevision = 0;
 
     // Estado local da transmissão
     this.localStreamingState = {
@@ -60,7 +64,9 @@ constructor({ roomId = 'general', userName = null, clientSessionId = null, roomP
       roomClosed: new Set(),
       pinRequired: new Set(),
       pinAccepted: new Set(),
-      joinRejected: new Set()
+      joinRejected: new Set(),
+      voiceChannelsUpdated: new Set(),
+      voiceChannelError: new Set()
     };
   }
 
@@ -107,6 +113,7 @@ join(peerId, isMaster = false) {
       isMuted: false,
       isDeafened: false,
       isSpeaking: false,
+      voiceChannelId: null,
       isStreaming: this.localStreamingState.isStreaming,
       streamDetails: this.localStreamingState.isStreaming ? { ...this.localStreamingState } : null,
       joinedAt: Date.now(),

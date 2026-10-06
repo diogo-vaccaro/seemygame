@@ -117,11 +117,12 @@ it('B05: rejected duplicate room connection cannot remove the authenticated memb
 
 it('B06: leaving while microphone permission is pending never announces a late join', async () => {
   const session = context(), manager = voice(), runtime = createRoomSession({ voiceManager: manager });
-  const rm = { myPeerId: 'local', userName: 'Local', isMaster: false, meshConnections: new Map(), broadcast: vi.fn() }, pending = deferred();
+  const rm = { myPeerId: 'local', userName: 'Local', isMaster: false, voiceChannels: new Map([['voice-1', {}]]), setLocalVoiceChannel: vi.fn(), meshConnections: new Map(), broadcast: vi.fn() }, pending = deferred();
   navigator.mediaDevices.getUserMedia = vi.fn(() => pending.promise);
   const join = runtime.joinRoomVoice(rm, session); runtime.leaveRoomVoice(rm, session); pending.resolve(stream()); await join;
   expect(manager.isInVoice).toBe(false);
-  expect(rm.broadcast.mock.calls.map(([message]) => message.action)).toEqual(['LEAVE']);
+  expect(rm.broadcast.mock.calls.map(([message]) => message.action)).toEqual(['LEAVE', 'LEAVE']);
+  expect(rm.setLocalVoiceChannel).toHaveBeenLastCalledWith(null);
 });
 
 it('B07: key and mouse releases outside the selected card reach the host once', () => {

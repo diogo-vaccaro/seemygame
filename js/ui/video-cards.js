@@ -448,13 +448,15 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   // Botão Sair / Encerrar
   const closeBtn = document.createElement('button');
   closeBtn.className = 'card-btn card-btn-danger';
-  closeBtn.innerText = isLocal ? 'Encerrar' : 'Sair';
+  const roomLobbyLayout = document.body.classList.contains('room-lobby-layout');
+  closeBtn.innerText = isLocal ? 'Encerrar' : roomLobbyLayout ? 'Fechar vídeo' : 'Sair';
   closeBtn.onclick = () => {
     if (onDisconnect) {
       onDisconnect(peerId);
     }
   };
-  controls.appendChild(closeBtn);
+  // In the room workspace the dock owns the single stop-stream action.
+  if (!isLocal || !roomLobbyLayout) controls.appendChild(closeBtn);
 
   header.appendChild(title);
   header.appendChild(controls);

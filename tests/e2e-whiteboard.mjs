@@ -46,7 +46,6 @@ async function run() {
 
     const modal = page.locator('#whiteboard-modal');
     const dockBtn = page.locator('#dock-whiteboard-btn');
-    const toggleBtn = page.locator('#toggle-whiteboard-btn');
     const closeBtn = page.locator('#wb-close-btn');
     const canvas = page.locator('#whiteboard-canvas');
 
@@ -113,16 +112,8 @@ async function run() {
     console.log(`   Lousa visível após pressionar Escape: ${await modal.isVisible()} (esperado: false)`);
     if (await modal.isVisible()) throw new Error('Lousa falhou em fechar com Escape!');
 
-    // 6. Abrir via header (#toggle-whiteboard-btn)
-    console.log('6. Abrindo via header #toggle-whiteboard-btn...');
-    await toggleBtn.click();
-    await page.waitForTimeout(400);
-    console.log(`   Lousa visível após clique no header: ${await modal.isVisible()} (esperado: true)`);
-    if (!(await modal.isVisible())) throw new Error('Lousa falhou em abrir pelo header!');
-
-    await closeBtn.click();
-    await page.waitForTimeout(400);
-    console.log(`   Lousa fechada novamente: ${!(await modal.isVisible())} (esperado: true)`);
+    // The room exposes one whiteboard action, in the dock.
+    if (await page.locator('#toggle-whiteboard-btn').count()) throw new Error('A sala duplicou o botão da lousa');
 
     // 7. Voltar para a sala via botão destacado `#wb-back-room-btn`
     console.log('7. Abrindo lousa e testando retorno para a sala via #wb-back-room-btn...');

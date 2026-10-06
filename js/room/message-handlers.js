@@ -50,6 +50,7 @@ handleRoomMessage(senderPeerId, message, conn) {
     if (senderMember) {
       senderMember.lastSeen = Date.now();
     }
+    if (this.handleVoiceChannelMessage(senderPeerId, message, conn)) return true;
 
     switch (message.type) {
       case 'ROOM_JOIN_REQUEST': {
@@ -132,6 +133,7 @@ handleRoomMessage(senderPeerId, message, conn) {
           isMaster: false,
           isMuted: Boolean(message.isMuted),
           isDeafened: Boolean(message.isDeafened),
+          voiceChannelId: this.voiceChannels.has(message.voiceChannelId) ? message.voiceChannelId : null,
           isStreaming: Boolean(message.isStreaming),
           streamDetails: message.streamDetails || null,
           joinedAt: Date.now(),
@@ -147,7 +149,8 @@ handleRoomMessage(senderPeerId, message, conn) {
             type: 'ROOM_SYNC_ALL',
             roomId: this.roomId,
             roomKey: this.roomKey,
-            members: this.getMembersList()
+            members: this.getMembersList(),
+            voiceChannels: [...this.voiceChannels.values()], voiceChannelsRevision: this.voiceChannelsRevision
           });
 
           this.broadcast({
@@ -227,6 +230,7 @@ handleRoomMessage(senderPeerId, message, conn) {
           return true;
         }
 
+        if (message.voiceChannels) this.applyVoiceChannels(message.voiceChannels, message.voiceChannelsRevision);
         if (Array.isArray(message.members)) {
           const newlyActiveStreamers = [];
           message.members.forEach((m) => {
@@ -239,6 +243,7 @@ handleRoomMessage(senderPeerId, message, conn) {
                 ...m,
                 peerId: m.peerId,
                 name: cleanName,
+                voiceChannelId: this.voiceChannels.has(m.voiceChannelId) ? m.voiceChannelId : null,
                 clientSessionId: m.clientSessionId || (prev ? prev.clientSessionId : null),
                 lastSeen: Date.now()
               };
@@ -392,13 +397,15 @@ handleRoomMessage(senderPeerId, message, conn) {
           if (typeof message.isMuted === 'boolean') member.isMuted = message.isMuted;
           if (typeof message.isDeafened === 'boolean') member.isDeafened = message.isDeafened;
           if (typeof message.isSpeaking === 'boolean') member.isSpeaking = message.isSpeaking;
+          if (message.voiceChannelId === null || this.voiceChannels.has(message.voiceChannelId)) member.voiceChannelId = message.voiceChannelId;
           if (this.isMaster) {
             this.broadcast({
               type: 'ROOM_MEMBER_STATE_UPDATE',
               peerId: targetPeerId,
               isMuted: member.isMuted,
               isDeafened: member.isDeafened,
-              isSpeaking: member.isSpeaking
+              isSpeaking: member.isSpeaking,
+              voiceChannelId: member.voiceChannelId ?? null
             }, senderPeerId);
           }
           this.emit('membersUpdated', this.getMembersList());

@@ -14,7 +14,10 @@ export function bindSessionMessageHandlers(session, {
   getDataConnections = () => [],
   broadcast = null,
   showToast = () => {},
-  getVideoCard = () => null
+  getVideoCard = () => null,
+  getVoiceChannelId = null,
+  getPeerVoiceChannelId = () => null,
+  getVoicePeerIds = () => []
 } = {}) {
   const dispatcher = session.dispatcher;
   const relay = (data, sourceConn) => {
@@ -67,6 +70,7 @@ export function bindSessionMessageHandlers(session, {
   }, 'Session voice state receive and relay');
 
   const activeVoiceCalls = new Map();
+  const sameVoiceChannel = peerId => !getVoiceChannelId || Boolean(getVoiceChannelId() && getVoiceChannelId() === getPeerVoiceChannelId(peerId));
   const replaceVoiceTrack = ({ newTrack }) => {
     if (session.isDisposed || !voiceManager?.isInVoice || !newTrack) return;
     for (const call of activeVoiceCalls.values()) {
@@ -88,12 +92,13 @@ export function bindSessionMessageHandlers(session, {
   const connectVoiceTo = (peerId) => {
     const localPeerId = getLocalPeerId();
     if (!peerId || !localPeerId || localPeerId.localeCompare(peerId) >= 0) return null;
-    if (session.isDisposed || !voicePeers.has(peerId) || !isAuthorizedPeer(peerId)) return null;
+    if (session.isDisposed || (!voicePeers.has(peerId) && !getVoiceChannelId) || !isAuthorizedPeer(peerId) || !sameVoiceChannel(peerId)) return null;
     if (!voiceManager?.isInVoice || !voiceManager.localStream || activeVoiceCalls.has(peerId)) return null;
     const peer = getPeer();
     if (!peer || peer.destroyed) return null;
     const call = peer.call(peerId, voiceManager.localStream, {
-      metadata: { type: 'VOICE_CHAT', name: voiceManager.myName, role: voiceManager.myRole }
+      metadata: { type: 'VOICE_CHAT', name: voiceManager.myName, role: voiceManager.myRole,
+        ...(getVoiceChannelId ? { voiceChannelId: getVoiceChannelId() } : {}) }
     });
     bindVoiceCall(call);
     return call;
@@ -109,7 +114,8 @@ export function bindSessionMessageHandlers(session, {
     const peerId = call.peer;
     activeVoiceCalls.set(peerId, call);
     call.on('stream', (stream) => {
-      if (session.isDisposed || activeVoiceCalls.get(peerId) !== call || !voiceManager.isInVoice) return;
+      if (session.isDisposed || activeVoiceCalls.get(peerId) !== call || !voiceManager.isInVoice || !sameVoiceChannel(peerId) ||
+          (getVoiceChannelId && call.metadata?.voiceChannelId !== getVoiceChannelId())) return;
       voiceManager.addRemoteParticipant(peerId, {
         name: call.metadata?.name || 'Jogador',
         role: call.metadata?.role || 'member',
@@ -129,10 +135,15 @@ export function bindSessionMessageHandlers(session, {
     activeVoiceCalls.clear();
     voicePeers.clear();
   });
+  const syncVoicePeers = () => {
+    if (!getVoiceChannelId || session.isDisposed) return;
+    for (const id of [...activeVoiceCalls.keys()]) if (!sameVoiceChannel(id)) removeVoicePeer(id);
+    for (const id of getVoicePeerIds()) if (sameVoiceChannel(id)) connectVoiceTo(id);
+  };
 
   register('VOICE_SIGNAL', (data, sourceConn) => {
     const peerId = data.peerId || sourceConn?.peer;
-    if (!peerId || (sourceConn?.peer && peerId !== sourceConn.peer)) return;
+    if (!peerId || !isAuthorizedPeer(peerId) || (sourceConn?.peer && peerId !== sourceConn.peer)) return;
     if (data.action === 'LEAVE') {
       voicePeers.delete(peerId);
       removeVoicePeer(peerId);
@@ -144,7 +155,7 @@ export function bindSessionMessageHandlers(session, {
         : `${data.name || 'Um amigo'} entrou na sala de voz!`, 'info');
     }
     session.eventBus.emit('voice:signal', data);
-    relay(data, sourceConn);
+    if (role !== 'room') relay(data, sourceConn);
   }, 'Session voice signaling');
 
   const coopTypes = [
@@ -183,6 +194,8 @@ export function bindSessionMessageHandlers(session, {
   return {
     bindVoiceCall,
     connectVoiceTo,
+    syncVoicePeers,
+    closeVoiceCalls() { for (const id of [...activeVoiceCalls.keys()]) removeVoicePeer(id); },
     answerVoiceCall(call) {
       if (!call || !voiceManager) return false;
       if (typeof isAuthorizedPeer === 'function' && !isAuthorizedPeer(call.peer)) {
@@ -191,7 +204,8 @@ export function bindSessionMessageHandlers(session, {
         return false;
       }
       const stream = voiceManager.isInVoice ? voiceManager.localStream : null;
-      if (!stream || session.isDisposed) {
+      if (!stream || session.isDisposed || !sameVoiceChannel(call.peer) ||
+          (getVoiceChannelId && call.metadata?.voiceChannelId !== getVoiceChannelId())) {
         try { call.close(); } catch (_) {}
         return false;
       }

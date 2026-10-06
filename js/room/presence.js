@@ -64,19 +64,21 @@ setLocalStreaming(isStreaming, details = {}) {
     this.notifyState();
   }
 
-setLocalVoiceState({ isMuted, isDeafened, isSpeaking } = {}) {
+setLocalVoiceState({ isMuted, isDeafened, isSpeaking, voiceChannelId } = {}) {
     const selfMember = this.members.get(this.myPeerId);
     if (!selfMember) return;
 
     if (typeof isMuted === 'boolean') selfMember.isMuted = isMuted;
     if (typeof isDeafened === 'boolean') selfMember.isDeafened = isDeafened;
     if (typeof isSpeaking === 'boolean') selfMember.isSpeaking = isSpeaking;
+    if (voiceChannelId === null || this.voiceChannels.has(voiceChannelId)) selfMember.voiceChannelId = voiceChannelId;
 
     this.broadcast({
       type: 'ROOM_MEMBER_STATE_UPDATE',
       peerId: this.myPeerId,
       isMuted: selfMember.isMuted,
       isDeafened: selfMember.isDeafened,
+      voiceChannelId: selfMember.voiceChannelId ?? null,
       isSpeaking: selfMember.isSpeaking
     });
 

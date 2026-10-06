@@ -26,7 +26,7 @@ async function roomFixture() {
   runtime.state.peer = { call: vi.fn(() => call), destroy: vi.fn() };
   runtime.state.roomManager = { userName: 'Host', myPeerId: 'host',
     meshConnections: new Map([['viewer', connection], ['unauthorized', { peer: 'unauthorized', open: true }]]),
-    isPeerAuthorized: id => id === 'viewer', setLocalStreaming: vi.fn(), broadcast: vi.fn(), leave: vi.fn() };
+    isPeerAuthorized: id => id === 'viewer', setLocalStreaming: vi.fn(), setLocalVoiceChannel: vi.fn(), broadcast: vi.fn(), leave: vi.fn() };
   const native = runtime.state.features.nativeMedia;
   vi.spyOn(native, 'broadcastTo').mockReturnValue(false);
   vi.spyOn(navigator.mediaDevices, 'getDisplayMedia').mockResolvedValue(stream);

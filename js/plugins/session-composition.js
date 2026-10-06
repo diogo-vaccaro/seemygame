@@ -27,7 +27,8 @@ export function registerSessionFeatures(session, {
   includeClipping = false,
   getCaptureProvider = () => null,
   getConnections = () => [],
-  isAuthorizedPeer = () => false
+  isAuthorizedPeer = () => false,
+  canReceiveSound = () => true
 } = {}) {
   const plugins = [
     createWhiteboardPlugin(),
@@ -51,6 +52,7 @@ export function registerSessionFeatures(session, {
     getDisplayName,
     getPeerId,
     getRole,
+    canReceiveSound,
     canUseTacticalPing: () => !session.services?.coopController?.getCoopState?.().isPlayer2,
     isRoomMode: () => role === 'room',
     isTrustedLaserRelayPeer: peerId => role === 'viewer' && isAuthorizedPeer(peerId),

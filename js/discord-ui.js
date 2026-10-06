@@ -8,6 +8,7 @@ import { withDiscordUIControllerSoundboard } from './discord-ui/soundboard.js';
 import { withDiscordUIControllerChat } from './discord-ui/chat.js';
 import { withDiscordUIControllerVoice } from './discord-ui/voice.js';
 import { withDiscordUIControllerStage } from './discord-ui/stage.js';
+import { bindRoomChannels, renderRoomChannels } from './discord-ui/channels.js';
 export class DiscordUIController extends withDiscordUIControllerStage(withDiscordUIControllerVoice(withDiscordUIControllerChat(withDiscordUIControllerSoundboard(withDiscordUIControllerDrawer(class {}))))) {
 constructor(options = {}) {
     super();
@@ -19,6 +20,7 @@ constructor(options = {}) {
       onSendMessage,
       onJoinVoice,
       onLeaveVoice,
+      onCreateVoiceChannel,
       onPlaySound,
       onPlayCustomSound,
       onSendReaction,
@@ -56,6 +58,7 @@ constructor(options = {}) {
     this.onLeaveVoice = onLeaveVoice || (() => {
       if (this.voiceManager) this.voiceManager.leaveVoice();
     });
+    this.onCreateVoiceChannel = onCreateVoiceChannel || (() => false);
     this.onPlaySound = onPlaySound || (() => {});
     this.onPlayCustomSound = onPlayCustomSound || ((sound) => {
       this.onPlaySound(sound.id);
@@ -142,6 +145,7 @@ init() {
       bottomControlDock: document.getElementById('bottom-control-dock'),
       reactionsDock: document.getElementById('reactions-dock'),
       roomStage: document.getElementById('room-stage'),
+      roomChannels: document.getElementById('room-channels-list'),
     };
 
     this.bindEvents();
@@ -150,6 +154,7 @@ init() {
     this.updateVoiceControls(this.voiceManager.getLocalVoiceState());
     this.renderVoiceParticipants(this.voiceManager.getParticipantsList());
     this.bindRoomDockEvents();
+    bindRoomChannels(this);
     this.initSoundboard();
     this.initEmojis();
     this.initStageDockAutoHide();
@@ -159,6 +164,8 @@ init() {
     });
     this._cleanupFns.push(unsubscribeSoundboard);
   }
+
+renderRoomChannels() { renderRoomChannels(this); }
 
 listen(target, event, listener, options) {
     if (!target || typeof target.addEventListener !== 'function') return () => {};

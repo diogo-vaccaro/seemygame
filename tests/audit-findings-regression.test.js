@@ -398,9 +398,7 @@ describe('Audit Findings Regression Suite (A01 - A15)', () => {
 
     const memberConn = new MockConnection('z-member');
     memberConn.open = true;
-    rm.registerConnection('z-member', memberConn);
-    rm.authenticatedPeers.add('z-member');
-    rm.meshConnections.set('z-member', memberConn);
+    rm.promoteConnection('z-member', memberConn, { voiceChannelId: 'voice-1' });
 
     const handlers = app.session.messageHandlers;
     expect(handlers).toBeTruthy();

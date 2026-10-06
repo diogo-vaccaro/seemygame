@@ -76,9 +76,9 @@ try {
     before: replayBefore, after: replayAfter });
   await author.locator('#dock-stream-btn').click();
   await wait(author, async () => Boolean((await import('/js/entries/room-entry.js')).roomState.localStream));
-  await author.locator('#dock-mic-btn').click();
+  await author.locator('[data-voice-channel="voice-1"]').click();
   await wait(author, async () => (await import('/js/entries/room-entry.js')).roomState.session.services.voiceManager.isInVoice);
-  await author.locator('#rail-btn-voice').click();
+  await author.locator('#toggle-voice-btn').click();
   await author.locator('#voice-mode-btn').click();
   await author.evaluate(() => {
     window.auditKeys = [];
@@ -129,7 +129,7 @@ try {
     await p.goto(server.origin + '/viewer.html#watch=' + hostId);
     await wait(p, async () => (await import('/js/entries/viewer-entry.js')).viewerState.remoteStream);
   }
-  for (const p of relayPages) await p.locator('#toggle-whiteboard-btn').click();
+  for (const p of relayPages) await p.locator('#dock-whiteboard-btn').click();
   const managerState = p => p.evaluate(async () => {
     const s = location.pathname.includes('streamer') ? (await import('/js/entries/streamer-entry.js')).streamerState : (await import('/js/entries/viewer-entry.js')).viewerState;
     return s.features.whiteboard.manager.elements.map(e => e.id);

@@ -47,6 +47,7 @@ registerConnection(peerId, conn, initialInfo = {}) {
         isMuted: Boolean(initialInfo.isMuted),
         isDeafened: Boolean(initialInfo.isDeafened),
         isSpeaking: false,
+        voiceChannelId: this.voiceChannels.has(initialInfo.voiceChannelId) ? initialInfo.voiceChannelId : null,
         isStreaming: Boolean(initialInfo.isStreaming),
         streamDetails: initialInfo.streamDetails || null,
         joinedAt: initialInfo.joinedAt || Date.now(),
@@ -69,6 +70,10 @@ registerConnection(peerId, conn, initialInfo = {}) {
       }
       if (initialInfo.clientSessionId && existing.clientSessionId !== initialInfo.clientSessionId) {
         existing.clientSessionId = initialInfo.clientSessionId;
+        changed = true;
+      }
+      if ((initialInfo.voiceChannelId === null || this.voiceChannels.has(initialInfo.voiceChannelId)) && existing.voiceChannelId !== initialInfo.voiceChannelId) {
+        existing.voiceChannelId = initialInfo.voiceChannelId;
         changed = true;
       }
       if (typeof initialInfo.isStreaming === 'boolean' && existing.isStreaming !== initialInfo.isStreaming) {

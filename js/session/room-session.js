@@ -176,6 +176,13 @@ async function setupRoomSession(peerId, session = roomState.session) {
   });
   roomState.roomManager = rm;
   bindRoomVoiceState(session, { roomManager: rm, voiceManager });
+  const syncVoice = () => roomState.messageHandlers?.syncVoicePeers();
+  const onChannels = () => roomState.discordUI?.renderRoomChannels();
+  const onChannelError = ({ message }) => showToast(message, 'error');
+  rm.on('membersUpdated', syncVoice);
+  rm.on('voiceChannelsUpdated', onChannels);
+  rm.on('voiceChannelError', onChannelError);
+  session.registerCleanup(() => { rm.off('membersUpdated', syncVoice); rm.off('voiceChannelsUpdated', onChannels); rm.off('voiceChannelError', onChannelError); });
   const submitPinBtn = document.getElementById('viewer-pin-submit-btn');
   const cancelPinBtn = document.getElementById('viewer-pin-cancel-btn');
   const pinInput = document.getElementById('viewer-pin-input');
@@ -382,20 +389,23 @@ async function setupRoomSession(peerId, session = roomState.session) {
           }
         }
       },
-      onJoinVoice: () => {
-        joinRoomVoice(rm, session);
+      onJoinVoice: channelId => {
+        return joinRoomVoice(rm, session, channelId);
       },
       onLeaveVoice: () => {
         leaveRoomVoice(rm, session);
       },
+      onCreateVoiceChannel: name => rm.createVoiceChannel(name),
       onOpenWhiteboard: () => roomState.features?.whiteboardUI?.open(),
       onPlaySound: (soundId) => {
+        if (!rm.voiceChannelId || !voiceManager.isInVoice) return;
         roomState.session?.pluginManager.get('soundboard')?.manager.playSound(soundId);
-        rm.broadcast({ type: 'SOUNDBOARD_PLAY', soundId, senderName: roomState.userName });
+        rm.broadcast({ type: 'SOUNDBOARD_PLAY', soundId, senderName: roomState.userName, voiceChannelId: rm.voiceChannelId });
       },
       onPlayCustomSound: (sound) => {
+        if (!rm.voiceChannelId || !voiceManager.isInVoice) return;
         roomState.features?.soundboard?.manager.playCustomSound(sound);
-        rm.broadcast({ type: 'SOUNDBOARD_PLAY_CUSTOM', ...sound, senderName: rm.userName });
+        rm.broadcast({ ...sound, type: 'SOUNDBOARD_PLAY_CUSTOM', senderName: rm.userName, voiceChannelId: rm.voiceChannelId });
       },
       onSendReaction: (emoji) => {
         const data = { type: 'EMOJI_REACTION', emoji, senderName: roomState.userName };
@@ -440,6 +450,7 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
         pin,
         name: rm.userName,
         clientSessionId: rm.clientSessionId,
+        voiceChannelId: rm.voiceChannelId,
         isStreaming: Boolean(roomState.localStream),
         streamDetails: roomState.localStream ? { ...rm.localStreamingState } : null
       });
@@ -548,12 +559,17 @@ function sendRoomStream(memberId, conn, rm, session) {
   call.on('error', release);
 }
 
-async function joinRoomVoice(rm, session) {
-  if (voiceManager.isInVoice) return;
+async function joinRoomVoice(rm, session, channelId = 'voice-1') {
+  if (!rm || !rm.voiceChannels.has(channelId) || session?.isDisposed) return;
+  if (voiceManager.isInVoice && rm.voiceChannelId === channelId) return;
+  leaveRoomVoice(rm, session);
+  const epoch = roomState.voiceJoinEpoch;
   try {
     const stream = await voiceManager.joinVoice({ peerId: rm.myPeerId, name: rm.userName, role: rm.isMaster ? 'host' : 'member' });
-    if (session?.isDisposed || !stream || !voiceManager.isInVoice) return;
-    rm.broadcast({ type: 'VOICE_SIGNAL', action: 'VOICE_JOINED', peerId: rm.myPeerId, name: rm.userName, role: rm.isMaster ? 'host' : 'member' });
+    if (session?.isDisposed || epoch !== roomState.voiceJoinEpoch || !stream || !voiceManager.isInVoice) return;
+    rm.setLocalVoiceChannel(channelId);
+    roomState.discordUI?.renderRoomChannels();
+    rm.broadcast({ type: 'VOICE_SIGNAL', action: 'VOICE_JOINED', voiceChannelId: channelId, peerId: rm.myPeerId, name: rm.userName, role: rm.isMaster ? 'host' : 'member' });
     for (const [memberId, conn] of rm.meshConnections) {
       if (!conn.open || !rm.isPeerAuthorized(memberId)) continue;
       const handlers = session?.messageHandlers || roomState.messageHandlers;
@@ -565,11 +581,14 @@ async function joinRoomVoice(rm, session) {
 }
 
 function leaveRoomVoice(rm, session) {
+  roomState.voiceJoinEpoch = (roomState.voiceJoinEpoch || 0) + 1;
   const handlers = session?.messageHandlers || roomState.messageHandlers;
   handlers?.activeVoiceCalls.forEach((call) => { try { call.close(); } catch (_) {} });
   handlers?.activeVoiceCalls.clear();
   voiceManager.leaveVoice();
-  rm.broadcast({ type: 'VOICE_SIGNAL', action: 'LEAVE', peerId: rm.myPeerId });
+  rm?.setLocalVoiceChannel(null);
+  rm?.broadcast({ type: 'VOICE_SIGNAL', action: 'LEAVE', peerId: rm.myPeerId });
+  roomState.discordUI?.renderRoomChannels();
 }
 
 async function startRoomCapture(rm, session, captureOptions = {}) {
@@ -872,11 +891,27 @@ async function initRoomApp(options = {}) {
     getPeerId: () => roomState.peer?.id || 'room-member',
     getRole: () => roomState.roomManager?.isMaster ? 'host' : 'viewer',
     getDisplayName: () => roomState.userName,
-    broadcastDataMessage: (data, excludePeerId) => roomState.roomManager?.broadcast(data, excludePeerId)
+    broadcastDataMessage: (data, excludePeerId) => {
+      const rm = roomState.roomManager;
+      if (['SOUNDBOARD_PLAY', 'SOUNDBOARD_PLAY_CUSTOM'].includes(data.type)) {
+        if (!rm?.voiceChannelId || !voiceManager.isInVoice) return false;
+        data = { ...data, voiceChannelId: rm.voiceChannelId };
+      }
+      return rm?.broadcast(data, excludePeerId);
+    },
+    canReceiveSound: (data, conn) => {
+      const rm = roomState.roomManager;
+      return Boolean(rm?.voiceChannelId && voiceManager.isInVoice && !voiceManager.isDeafened &&
+        rm.isPeerAuthorized(conn?.peer) && data.voiceChannelId === rm.voiceChannelId &&
+        rm.members.get(conn?.peer)?.voiceChannelId === rm.voiceChannelId);
+    }
   });
   roomState.features = features;
   const messageHandlers = bindSessionMessageHandlers(session, { coopController,
     role: 'room',
+    getVoiceChannelId: () => roomState.roomManager?.voiceChannelId ?? null,
+    getPeerVoiceChannelId: id => roomState.roomManager?.members.get(id)?.voiceChannelId ?? null,
+    getVoicePeerIds: () => roomState.roomManager?.members.keys() || [],
     chatManager,
     voiceManager,
     getVideoCard: peerId => document.getElementById(`card-${peerId}`),
@@ -944,7 +979,7 @@ async function initRoomApp(options = {}) {
     },
     startCapture: options => startRoomCapture(roomState.roomManager, session, options),
     stopCapture: () => stopRoomCapture(roomState.roomManager, session),
-    joinVoice: () => joinRoomVoice(roomState.roomManager, session),
+    joinVoice: channelId => joinRoomVoice(roomState.roomManager, session, channelId),
     leaveVoice: () => leaveRoomVoice(roomState.roomManager, session),
     state: roomState,
     getRoomInfo: getRoomInfoFromUrl

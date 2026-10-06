@@ -1,0 +1,89 @@
+/* Room workspace: channel navigation, stage and persistent text chat. */
+.room-lobby-layout .room-layout-container { display: grid; grid-template-columns: 240px minmax(0, 1fr) 310px; }
+.room-lobby-layout .room-sidebar { width: auto; min-width: 0; max-width: none; }
+.room-connection-status { color: var(--text-muted); font-size: 11px; padding: 0 8px; }
+.room-lobby-layout .room-channel-button:hover { background: var(--surface-tint); box-shadow: none; transform: none; }
+.room-lobby-layout .room-channel-button.active { background: color-mix(in srgb, var(--accent) 12%, transparent); color: var(--text-main); }
+.room-lobby-layout .room-sidebar-header { padding: 18px 16px 12px; }
+.room-lobby-layout .room-sidebar-title { font-size: 14px; }
+.room-channels-list { padding: 10px 8px 0; max-height: 48%; overflow-y: auto; }
+.room-channel { margin-bottom: 8px; }
+.room-channel-button { width: 100%; display: flex; align-items: center; gap: 9px; padding: 10px; border: 1px solid transparent; border-radius: 8px; color: var(--text-muted); background: transparent; font: inherit; font-size: 13px; cursor: pointer; text-align: left; }
+.room-channel-button > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-channel-button:hover { color: var(--text-main); background: var(--surface-tint); }
+.room-channel-button.active { color: var(--text-main); border-color: color-mix(in srgb, var(--accent) 32%, transparent); background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.room-channel-icon { width: 22px; flex-shrink: 0; font-size: 18px; color: var(--accent-text); }
+.room-channel-count { margin-left: auto; font-size: 11px; font-variant-numeric: tabular-nums; padding: 2px 6px; border-radius: 5px; background: var(--surface-tint); }
+.room-channel-people { display: flex; flex-direction: column; gap: 6px; padding: 4px 12px 2px 42px; font-size: 12px; color: var(--text-muted); }
+.room-channel-people small { font-size: 10px; }
+.room-channel-people .speaking { color: var(--accent-green); }
+.room-channel-create { padding: 0 16px 12px; border-bottom: 1px solid var(--border-color); }
+.room-channel-create > button { border: 0; padding: 5px 0; background: transparent; color: var(--accent-text); cursor: pointer; font-size: 12px; }
+.room-channel-create form { margin-top: 8px; font-size: 11px; }
+.room-channel-create input { box-sizing: border-box; width: 100%; margin: 6px 0; padding: 8px; background: var(--bg-input); color: var(--text-main); border: 1px solid var(--border-color); border-radius: 6px; }
+.room-channel-create form button { padding: 6px 12px; border: 0; border-radius: 6px; background: var(--accent); color: var(--text-on-accent); cursor: pointer; }
+.room-section-label { margin: 16px 16px 0; font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--text-muted); }
+.room-lobby-layout .room-user-footer { flex-direction: column; align-items: stretch; padding: 12px; }
+.room-lobby-layout .user-quick-actions { justify-content: space-between; }
+.room-lobby-layout .quick-icon-btn { width: 36px; height: 32px; }
+.room-voice-connection { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; background: var(--bg-card-header); font-size: 11px; color: var(--text-muted); }
+.room-voice-connection .voice-dock-btn { font-size: 11px; width: 100%; padding: 8px; }
+.room-lobby-layout button:disabled { opacity: .4; cursor: not-allowed; }
+.room-chat { display: flex; flex-direction: column; min-height: 0; min-width: 0; background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 12px; overflow: hidden; }
+.room-chat-heading { display: flex; flex-direction: column; gap: 4px; padding: 18px 16px; border-bottom: 1px solid var(--border-color); }
+.room-chat-heading strong { font-size: 14px; }
+.room-chat-heading span { font-size: 11px; color: var(--text-muted); }
+.room-chat .chat-panel { flex: 1; height: auto; min-height: 0; }
+.room-chat .chat-messages-container { padding: 16px 12px; }
+.room-chat .chat-input-bar { padding: 12px; gap: 6px; }
+.room-chat .chat-input { min-width: 0; }
+.room-chat .chat-send-btn { padding: 8px; font-size: 11px; }
+.room-chat .chat-role-badge { display: none; }
+.room-chat .chat-message-system { line-height: 1.6; }
+.room-lobby-welcome { max-width: 410px; text-align: center; padding: 36px 24px; }
+.room-lobby-eyebrow { font-size: 10px; letter-spacing: .14em; color: var(--accent-text); font-weight: 700; }
+.room-lobby-welcome h1 { margin: 18px 0 12px; font-size: clamp(22px, 2.3vw, 34px); letter-spacing: -.03em; }
+.room-lobby-welcome p { font-size: 14px; line-height: 1.7; color: var(--text-muted); }
+.room-lobby-welcome small { display: block; margin-top: 26px; font-size: 11px; color: var(--text-dim); }
+.room-lobby-layout .bottom-control-dock { position: static; transform: none; flex-shrink: 0; justify-content: center; flex-wrap: wrap; border: 0; border-top: 1px solid var(--border-color); border-radius: 0; box-shadow: none; backdrop-filter: none; padding: 10px 8px; }
+.room-lobby-layout .bottom-control-dock.dock-hidden { opacity: 1; transform: none; pointer-events: auto; }
+.room-lobby-layout .dock-btn { font-size: 11px; padding: 8px 10px; }
+.room-lobby-layout .reactions-dock { bottom: 72px; padding: 4px; }
+.room-lobby-layout .discord-drawer { left: auto; right: -430px; top: 90px; height: calc(100vh - 106px); border: 1px solid var(--border-color); border-radius: 12px; transition: right .2s ease; }
+.room-lobby-layout .discord-drawer.open { left: auto; right: 16px; }
+.room-lobby-layout .drawer-tabs:empty { display: none; }
+.room-lobby-layout .voice-panel { min-height: 0; overflow-y: auto; }
+.room-lobby-layout #room-chat-toggle { display: none; }
+.room-lobby-layout button:focus-visible, .room-lobby-layout input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+@media (max-width: 1250px) {
+  .room-lobby-layout .room-layout-container { grid-template-columns: 210px minmax(0, 1fr) 270px; gap: 8px; }
+  .room-lobby-layout .dock-btn { padding: 7px 8px; }
+}
+@media (max-width: 1000px) {
+  .room-lobby-layout .room-layout-container { grid-template-columns: 210px minmax(0, 1fr); }
+  .room-chat { position: absolute; right: 0; top: 0; bottom: 0; width: min(330px, calc(100% - 218px)); z-index: 90; box-shadow: var(--shadow-panel); }
+  .room-chat.is-collapsed { display: none; }
+  .room-lobby-layout #room-chat-toggle { display: inline-flex; }
+}
+@media (max-width: 768px) {
+  .room-lobby-layout .room-sidebar { position: static; transform: none; }
+  .room-lobby-layout .bottom-control-dock { width: auto; }
+}
+@media (max-width: 620px) {
+  .room-lobby-layout .room-layout-container { grid-template-columns: 155px minmax(0, 1fr); }
+  .room-lobby-layout .room-sidebar-header { padding: 12px 8px; }
+  .room-lobby-layout .room-sidebar-title { flex-direction: column; align-items: start; gap: 4px; }
+  .room-lobby-layout .room-user-footer { padding: 8px; }
+  .room-lobby-layout .quick-icon-btn { width: 28px; flex-shrink: 0; }
+  .room-lobby-layout .user-quick-actions { gap: 2px; }
+  .room-channel-button { padding: 8px 4px; gap: 4px; font-size: 12px; }
+  .room-channel-people { padding-left: 30px; }
+  .room-channel-create { padding: 0 8px 10px; }
+  .room-chat { width: calc(100% - 163px); }
+  .room-lobby-layout .dock-label { display: none; }
+  .room-lobby-welcome { padding: 12px; }
+  .room-lobby-layout .discord-drawer { width: min(380px, 92vw); top: 16px; height: calc(100vh - 32px); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .room-lobby-layout *, .room-lobby-layout *::before, .room-lobby-layout *::after { animation: none; transition: none; }
+}

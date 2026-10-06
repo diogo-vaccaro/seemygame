@@ -17,6 +17,7 @@ bindRoomDockEvents() {
 
     const handleMicToggle = () => {
       if (!this.voiceManager.isInVoice) {
+        if (this.elements.roomChannels) return;
         this.onJoinVoice();
         return;
       }
@@ -26,6 +27,7 @@ bindRoomDockEvents() {
 
     const handleDeafToggle = () => {
       if (!this.voiceManager.isInVoice) {
+        if (this.elements.roomChannels) return;
         this.onJoinVoice();
         return;
       }
@@ -39,7 +41,7 @@ bindRoomDockEvents() {
     if (dockDeafBtn) this.listen(dockDeafBtn, 'click', handleDeafToggle);
     if (quickDeafBtn) this.listen(quickDeafBtn, 'click', handleDeafToggle);
 
-    if (this.elements.sidebarVoiceStatusContainer) {
+    if (this.elements.sidebarVoiceStatusContainer && !this.elements.roomChannels) {
       this.listen(this.elements.sidebarVoiceStatusContainer, 'click', () => {
         if (!this.voiceManager.isInVoice) {
           this.onJoinVoice();
@@ -184,6 +186,7 @@ initStageDockAutoHide() {
   }
 
 updateRoomPresence(members) {
+    this.renderRoomChannels();
     const { roomParticipantsList, voiceStageGrid, sidebarMembersCount } = this.elements;
     const onlineCount = document.querySelector('#viewer-count strong');
     if (onlineCount && Array.isArray(members)) onlineCount.textContent = String(members.length);
@@ -197,7 +200,7 @@ updateRoomPresence(members) {
 
     if (roomParticipantsList && Array.isArray(members)) {
       roomParticipantsList.innerHTML = '';
-      members.forEach((m) => {
+      members.filter(m => !this.elements.roomChannels || !m.voiceChannelId).forEach((m) => {
         const initial = (m.name || 'A').charAt(0).toUpperCase();
         const item = document.createElement('div');
         item.className = 'participant-item';
@@ -265,7 +268,16 @@ updateRoomPresence(members) {
 
     if (voiceStageGrid && Array.isArray(members)) {
       voiceStageGrid.innerHTML = '';
-      members.forEach((m) => {
+      const stageMembers = this.elements.roomChannels ? members.filter(m => this.roomManager.voiceChannelId && m.voiceChannelId === this.roomManager.voiceChannelId) : members;
+      if (this.elements.roomChannels && !this.roomManager.voiceChannelId) {
+        const lobby = document.createElement('div'); lobby.className = 'room-lobby-welcome';
+        const label = document.createElement('span'); label.className = 'room-lobby-eyebrow'; label.textContent = 'SEU PONTO DE ENCONTRO';
+        const title = document.createElement('h1'); title.textContent = 'Você está no lobby';
+        const text = document.createElement('p'); text.textContent = 'Converse pelo chat, compartilhe seu jogo ou entre em uma sala de voz com os amigos.';
+        const note = document.createElement('small'); note.textContent = 'Microfone e áudio da conversa desligados';
+        lobby.append(label, title, text, note); voiceStageGrid.append(lobby);
+      }
+      stageMembers.forEach((m) => {
         const initial = (m.name || 'A').charAt(0).toUpperCase();
         const tile = document.createElement('div');
         tile.className = `voice-tile ${m.isSpeaking ? 'speaking' : ''}`;
@@ -302,7 +314,7 @@ syncStageView(hasActiveStreams) {
       bottomControlDock.classList.remove('dock-hidden');
     }
     if (reactionsDock) {
-      reactionsDock.style.display = 'flex';
+      reactionsDock.style.display = this.elements.roomChannels && !hasActiveStreams ? 'none' : 'flex';
     }
     if (videoGrid && voiceStageGrid) {
       if (hasActiveStreams) {

@@ -178,12 +178,19 @@ toggleDrawer(tab = 'chat') {
   }
 
 openDrawer(tab = 'chat') {
+    if (this.elements.roomChannels && tab === 'chat') {
+      document.getElementById('room-chat')?.classList.remove('is-collapsed');
+      document.getElementById('room-chat-toggle')?.setAttribute('aria-expanded', 'true');
+      this.chatManager.setChatOpen(true);
+      this.chatManager.markChannelAsRead();
+      return;
+    }
     this.isDrawerOpen = true;
     if (this.elements.drawer) {
       this.elements.drawer.classList.add('open');
     }
     this.switchTab(tab);
-    this.chatManager.setChatOpen(true);
+    if (!this.elements.roomChannels) this.chatManager.setChatOpen(true);
     this.updateChatBadge(0);
   }
 
@@ -213,7 +220,7 @@ closeDrawer() {
     if (railEmojisBtn) railEmojisBtn.classList.remove('active');
     if (railSoundboardBtn) railSoundboardBtn.classList.remove('active');
 
-    this.chatManager.setChatOpen(false);
+    if (!this.elements.roomChannels) this.chatManager.setChatOpen(false);
   }
 
 switchTab(tab) {
@@ -242,7 +249,11 @@ switchTab(tab) {
     if (tabEmojis) tabEmojis.classList.toggle('active', tab === 'emojis');
     if (tabSoundboard) tabSoundboard.classList.toggle('active', tab === 'soundboard');
 
-    if (panelChat) panelChat.style.display = tab === 'chat' ? 'flex' : 'none';
+    if (panelChat) panelChat.style.display = this.elements.roomChannels || tab === 'chat' ? 'flex' : 'none';
+    if (this.elements.roomChannels) {
+      const title = document.getElementById('room-tools-title');
+      if (title) title.textContent = { voice: 'Configurações de voz', emojis: 'Emojis e reações', soundboard: 'Sons' }[tab] || 'Ferramentas';
+    }
     if (panelVoice) panelVoice.style.display = tab === 'voice' ? 'flex' : 'none';
     if (panelEmojis) panelEmojis.style.display = tab === 'emojis' ? 'flex' : 'none';
     if (panelSoundboard) panelSoundboard.style.display = tab === 'soundboard' ? 'flex' : 'none';

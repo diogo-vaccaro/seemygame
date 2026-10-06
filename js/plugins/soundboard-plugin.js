@@ -28,6 +28,7 @@ export class SoundboardPlugin extends BasePlugin {
     if (dispatcher) {
       this._dispatcherUnsubs.push(
         dispatcher.register('SOUNDBOARD_PLAY', (data, sourceConn) => {
+          if (this.context?.canReceiveSound && !this.context.canReceiveSound(data, sourceConn)) return;
           this.manager.playSound(data.soundId);
           showToast(`🔊 ${data.senderName || 'Alguém'} tocou um som no soundboard!`, 'info', 2500);
           if (eventBus) eventBus.emit('soundboard:played', data);
@@ -37,13 +38,14 @@ export class SoundboardPlugin extends BasePlugin {
 
       this._dispatcherUnsubs.push(
         dispatcher.register('SOUNDBOARD_PLAY_CUSTOM', (data, sourceConn) => {
+          if (this.context?.canReceiveSound && !this.context.canReceiveSound(data, sourceConn)) return;
           if (data.audioBase64) {
             try {
               const wavBlob = base64ToWavBlob(data.audioBase64);
               const ctx = this.context?.audioScope?.getContext() || getSharedAudioContext();
               if (ctx) {
                 decodeAudioFromBlob(wavBlob, ctx).then(buf => {
-                  if (buf && this.enabled) playAudioBuffer(buf, ctx);
+                  if (buf && this.enabled && (!this.context?.canReceiveSound || this.context.canReceiveSound(data, sourceConn))) playAudioBuffer(buf, ctx);
                 }).catch((err) => {
                   console.warn('[SoundboardPlugin] Falha ao decodificar áudio customizado:', err);
                 });
