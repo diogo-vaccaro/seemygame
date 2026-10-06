@@ -18,10 +18,38 @@ mod webrtc_bridge;
 mod webrtc_common;
 mod windows_list;
 mod window_lifecycle;
+mod instance_profile;
 
 #[cfg(not(test))]
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let context = tauri::generate_context!();
+    #[cfg(windows)]
+    let _profile_lease = {
+        let explicit = std::env::var_os("WEBVIEW2_USER_DATA_FOLDER")
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from);
+        // Match Tauri's default Windows profile without changing the primary.
+        // Use WebView2's environment override: the installed tauri-runtime
+        // does not propagate WindowConfig.data_directory into its attributes.
+        let default_directory = std::env::var_os("LOCALAPPDATA")
+            .filter(|value| !value.is_empty())
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir)
+            .join(&context.config().identifier);
+        let base = explicit.as_deref().unwrap_or(&default_directory);
+        let key = base.to_string_lossy();
+        let lease = instance_profile::ProfileLease::acquire(&key);
+        let slot = lease.as_ref().map(|lease| lease.slot).unwrap_or_else(|_| std::process::id().saturating_add(33));
+        if let Some(directory) = instance_profile::secondary_directory(Some(base), slot) {
+            // This executes before Tauri/WebView2 starts threads or reads the environment.
+            std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", &directory);
+            system::write_debug_log(&format!("[InstanceProfile] isolated secondary slot={slot} directory={}", directory.display()));
+        } else {
+            system::write_debug_log("[InstanceProfile] primary profile preserved slot=1");
+        }
+        lease.ok()
+    };
     tauri::Builder::default()
         .setup(|app| {
             app.handle().plugin(
@@ -107,6 +135,6 @@ pub fn run() {
             native_viewer::add_native_viewer_candidate,
             native_viewer::stop_native_viewer
         ])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }

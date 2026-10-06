@@ -140,6 +140,35 @@ describe('Módulo: desktop.js (Tauri v2 / Rust Integration)', () => {
         expect(res.type).toBe('answer');
     });
 
+    it('serializes browser STUN/TURN objects to the Rust Vec<String> contract', async () => {
+        const { DEFAULT_ICE_SERVERS } = await import('../js/config.js');
+        window.__TAURI_INTERNALS__ = { invoke: vi.fn().mockResolvedValue({ sdp: 'answer' }) };
+        await createNativeViewerPeer('capture', 'guest', 'v=0 offer', DEFAULT_ICE_SERVERS, 'generation');
+        const payload = window.__TAURI_INTERNALS__.invoke.mock.calls[0][1];
+        expect(payload.negotiationId).toBe('generation');
+        expect(payload.iceServers).toEqual([
+            ...DEFAULT_ICE_SERVERS.slice(0, 6).map(server => server.urls),
+            'turn://openrelayproject:openrelayproject@openrelay.metered.ca:80',
+            'turn://openrelayproject:openrelayproject@openrelay.metered.ca:443',
+            'turns://openrelayproject:openrelayproject@openrelay.metered.ca:443?transport=tcp'
+        ]);
+    });
+
+    it('normalizes multiple TURN URLs and escaped credentials for both native commands', async () => {
+        const { startNativeViewer } = await import('../js/desktop.js');
+        window.__TAURI_INTERNALS__ = { invoke: vi.fn().mockResolvedValue({ sdp: 'answer' }) };
+        const servers = [{ urls: ['turn:relay.example:3478?transport=udp', 'turns:relay.example:443'], username: 'user:@ /', credential: 'p@ss:/?' }, { urls: 'stun:stun.example:3478' }];
+        await createNativeViewerPeer('capture', 'guest', 'offer', servers);
+        await startNativeViewer('host', 'offer', servers, false);
+        for (const [, payload] of window.__TAURI_INTERNALS__.invoke.mock.calls) {
+            expect(payload.iceServers).toEqual([
+                'turn://user%3A%40%20%2F:p%40ss%3A%2F%3F@relay.example:3478?transport=udp',
+                'turns://user%3A%40%20%2F:p%40ss%3A%2F%3F@relay.example:443',
+                'stun:stun.example:3478'
+            ]);
+        }
+    });
+
     it('addNativeViewerIceCandidate deve invocar add_native_viewer_ice_candidate com tipos corretos', async () => {
         window.__TAURI_INTERNALS__ = {
             invoke: vi.fn().mockResolvedValue(null)

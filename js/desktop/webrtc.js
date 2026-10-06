@@ -1,5 +1,6 @@
 import { isDesktopApp } from './ipc.js';
 import { invokeDesktopCommand } from './ipc.js';
+import { toNativeIceServers } from './ice-servers.js';
 /** webrtc: commands receive explicit compatibility ports; no page initialization. */
 export async function createNativeCapturePeer(sessionId, offerSdp) {
     if (!isDesktopApp()) throw new Error('Ponte WebRTC nativa só está disponível no app desktop');
@@ -21,7 +22,7 @@ export async function createNativeViewerPeer(sessionId, viewerId, offerSdp, iceS
     }
     const payload = { sessionId, viewerId, offerSdp };
     if (negotiationId) payload.negotiationId = negotiationId;
-    if (iceServers) payload.iceServers = iceServers;
+    if (iceServers) payload.iceServers = toNativeIceServers(iceServers);
     return await invokeDesktopCommand('create_native_viewer_peer', payload);
 }
 
@@ -54,7 +55,7 @@ export async function startNativeViewer(hostId, offerSdp, iceServers = null, ope
     return invokeDesktopCommand('start_native_viewer', {
         hostId: String(hostId),
         offerSdp: String(offerSdp),
-        iceServers: Array.isArray(iceServers) ? iceServers : null,
+        iceServers: toNativeIceServers(iceServers),
         openDedicatedWindow: Boolean(openDedicatedWindow)
     });
 }
