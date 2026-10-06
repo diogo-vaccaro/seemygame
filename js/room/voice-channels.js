@@ -33,8 +33,8 @@ export const withRoomVoiceChannels = Base => class extends Base {
     return true;
   }
   channelError(message) { this.emit('voiceChannelError', { message }); return false; }
-  applyVoiceChannels(channels, revision) {
-    if (!Array.isArray(channels) || channels.length < 2 || channels.length > MAX_VOICE_CHANNELS || !Number.isSafeInteger(revision) || revision < this.voiceChannelsRevision) return false;
+  applyVoiceChannels(channels, revision, { resetRevision = false } = {}) {
+    if (!Array.isArray(channels) || channels.length < 2 || channels.length > MAX_VOICE_CHANNELS || !Number.isSafeInteger(revision) || revision < 0 || (!resetRevision && revision < this.voiceChannelsRevision)) return false;
     const next = new Map();
     for (const c of channels) {
       if (!c || typeof c.id !== 'string' || !/^voice-[a-zA-Z0-9-]{1,60}$/.test(c.id) || !validName(c.name) || next.has(c.id)) return false;
@@ -42,6 +42,11 @@ export const withRoomVoiceChannels = Base => class extends Base {
     }
     if (!DEFAULT_VOICE_CHANNELS.every(c => next.has(c.id))) return false;
     this.voiceChannels = next; this.voiceChannelsRevision = revision;
+    if (this.voiceChannelId && !next.has(this.voiceChannelId)) {
+      const channelId = this.voiceChannelId;
+      this.setLocalVoiceChannel(null);
+      this.emit('voiceChannelRemoved', { channelId });
+    }
     this.emit('voiceChannelsUpdated', [...next.values()]);
     return true;
   }

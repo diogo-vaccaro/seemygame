@@ -46,7 +46,7 @@ registerConnection(peerId, conn, initialInfo = {}) {
         isMaster: Boolean(initialInfo.isMaster),
         isMuted: Boolean(initialInfo.isMuted),
         isDeafened: Boolean(initialInfo.isDeafened),
-        isSpeaking: false,
+        isSpeaking: Boolean(initialInfo.isSpeaking && !initialInfo.isMuted && this.voiceChannels.has(initialInfo.voiceChannelId)),
         voiceChannelId: this.voiceChannels.has(initialInfo.voiceChannelId) ? initialInfo.voiceChannelId : null,
         isStreaming: Boolean(initialInfo.isStreaming),
         streamDetails: initialInfo.streamDetails || null,
@@ -75,6 +75,12 @@ registerConnection(peerId, conn, initialInfo = {}) {
       if ((initialInfo.voiceChannelId === null || this.voiceChannels.has(initialInfo.voiceChannelId)) && existing.voiceChannelId !== initialInfo.voiceChannelId) {
         existing.voiceChannelId = initialInfo.voiceChannelId;
         changed = true;
+      }
+      for (const key of ['isMuted', 'isDeafened', 'isSpeaking']) {
+        if (typeof initialInfo[key] === 'boolean' && existing[key] !== initialInfo[key]) {
+          existing[key] = initialInfo[key];
+          changed = true;
+        }
       }
       if (typeof initialInfo.isStreaming === 'boolean' && existing.isStreaming !== initialInfo.isStreaming) {
         existing.isStreaming = initialInfo.isStreaming;

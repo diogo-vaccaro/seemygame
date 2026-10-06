@@ -44,7 +44,7 @@ bindVoiceEvents() {
     });
 
     this.observe(this.voiceManager, 'voiceStateChange', (state) => {
-      if (!state.isInVoice || state.voiceMode !== 'ptt') heldPttKeys.clear();
+      if (!state.isInVoice || state.voiceMode !== 'ptt' || state.isDeafened) heldPttKeys.clear();
       this.updateVoiceControls(state);
     });
 

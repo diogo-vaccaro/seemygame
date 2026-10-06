@@ -13,6 +13,7 @@ constructor(options = {}) {
     this.audioContextProvider = options.audioContextProvider || getAudioContext;
     this.isInVoice = false;
     this.isMuted = false;
+    this.isManuallyMuted = false;
     this.isDeafened = false;
     this.voiceMode = 'vad'; // 'vad' | 'ptt'
     this.isPttActive = false;

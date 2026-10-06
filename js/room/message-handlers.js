@@ -133,6 +133,7 @@ handleRoomMessage(senderPeerId, message, conn) {
           isMaster: false,
           isMuted: Boolean(message.isMuted),
           isDeafened: Boolean(message.isDeafened),
+          isSpeaking: Boolean(message.isSpeaking && !message.isMuted && this.voiceChannels.has(message.voiceChannelId)),
           voiceChannelId: this.voiceChannels.has(message.voiceChannelId) ? message.voiceChannelId : null,
           isStreaming: Boolean(message.isStreaming),
           streamDetails: message.streamDetails || null,
@@ -230,7 +231,10 @@ handleRoomMessage(senderPeerId, message, conn) {
           return true;
         }
 
-        if (message.voiceChannels) this.applyVoiceChannels(message.voiceChannels, message.voiceChannelsRevision);
+        // Re-admission through a new authenticated coordinator connection can
+        // belong to a restarted coordinator whose catalog begins at revision 0.
+        if (message.voiceChannels && this.applyVoiceChannels(message.voiceChannels, message.voiceChannelsRevision,
+          { resetRevision: this.voiceCatalogConnection !== conn })) this.voiceCatalogConnection = conn;
         if (Array.isArray(message.members)) {
           const newlyActiveStreamers = [];
           message.members.forEach((m) => {

@@ -70,6 +70,10 @@ export function bindSessionMessageHandlers(session, {
   }, 'Session voice state receive and relay');
 
   const activeVoiceCalls = new Map();
+  const pendingVoiceCalls = new Map();
+  const negotiationTimers = new Map();
+  const negotiationTimeoutMs = 5000;
+  const maxVoiceRetries = 2;
   const sameVoiceChannel = peerId => !getVoiceChannelId || Boolean(getVoiceChannelId() && getVoiceChannelId() === getPeerVoiceChannelId(peerId));
   const replaceVoiceTrack = ({ newTrack }) => {
     if (session.isDisposed || !voiceManager?.isInVoice || !newTrack) return;
@@ -89,7 +93,7 @@ export function bindSessionMessageHandlers(session, {
   voiceManager?.on?.('audioInputTrackChange', replaceVoiceTrack);
   session.registerCleanup(() => voiceManager?.off?.('audioInputTrackChange', replaceVoiceTrack));
   const voicePeers = new Set();
-  const connectVoiceTo = (peerId) => {
+  const connectVoiceTo = (peerId, attempt = 0) => {
     const localPeerId = getLocalPeerId();
     if (!peerId || !localPeerId || localPeerId.localeCompare(peerId) >= 0) return null;
     if (session.isDisposed || (!voicePeers.has(peerId) && !getVoiceChannelId) || !isAuthorizedPeer(peerId) || !sameVoiceChannel(peerId)) return null;
@@ -101,21 +105,52 @@ export function bindSessionMessageHandlers(session, {
         ...(getVoiceChannelId ? { voiceChannelId: getVoiceChannelId() } : {}) }
     });
     bindVoiceCall(call);
+    // An unanswered PeerJS offer can remain open locally after the recipient
+    // rejects it. Bound that wait and retry only while channel/authority agree.
+    if (call && getVoiceChannelId && activeVoiceCalls.get(peerId) === call) {
+      const channelId = getVoiceChannelId();
+      negotiationTimers.set(call, setTimeout(() => {
+        negotiationTimers.delete(call);
+        if (activeVoiceCalls.get(peerId) !== call) return;
+        removeVoicePeer(peerId);
+        if (attempt < maxVoiceRetries && channelId === getVoiceChannelId()) connectVoiceTo(peerId, attempt + 1);
+      }, negotiationTimeoutMs));
+    }
     return call;
   };
+  const clearNegotiationTimer = call => {
+    clearTimeout(negotiationTimers.get(call));
+    negotiationTimers.delete(call);
+  };
+  const clearPendingVoiceCall = (peerId, close = true) => {
+    const pending = pendingVoiceCalls.get(peerId);
+    if (!pending) return;
+    pendingVoiceCalls.delete(peerId);
+    clearTimeout(pending.timer);
+    if (close) { try { pending.call.close(); } catch (_) {} }
+  };
   const removeVoicePeer = (peerId) => {
+    clearPendingVoiceCall(peerId);
     const call = activeVoiceCalls.get(peerId);
-    try { call?.close?.(); } catch (_) {}
     activeVoiceCalls.delete(peerId);
+    clearNegotiationTimer(call);
+    try { call?.close?.(); } catch (_) {}
     voiceManager?.removeRemoteParticipant(peerId);
   };
   const bindVoiceCall = (call) => {
     if (!call || !voiceManager) return;
     const peerId = call.peer;
+    const previous = activeVoiceCalls.get(peerId);
+    if (previous && previous !== call) {
+      activeVoiceCalls.delete(peerId);
+      clearNegotiationTimer(previous);
+      try { previous.close(); } catch (_) {}
+    }
     activeVoiceCalls.set(peerId, call);
     call.on('stream', (stream) => {
       if (session.isDisposed || activeVoiceCalls.get(peerId) !== call || !voiceManager.isInVoice || !sameVoiceChannel(peerId) ||
           (getVoiceChannelId && call.metadata?.voiceChannelId !== getVoiceChannelId())) return;
+      clearNegotiationTimer(call);
       voiceManager.addRemoteParticipant(peerId, {
         name: call.metadata?.name || 'Jogador',
         role: call.metadata?.role || 'member',
@@ -123,21 +158,30 @@ export function bindSessionMessageHandlers(session, {
       });
     });
     const cleanup = () => {
+      clearNegotiationTimer(call);
       if (activeVoiceCalls.get(peerId) !== call) return;
-      voiceManager.removeRemoteParticipant(peerId);
       activeVoiceCalls.delete(peerId);
+      voiceManager.removeRemoteParticipant(peerId);
     };
     call.on('close', cleanup);
     call.on('error', cleanup);
   };
   session.registerCleanup(() => {
-    for (const peerId of activeVoiceCalls.keys()) removeVoicePeer(peerId);
+    for (const peerId of new Set([...activeVoiceCalls.keys(), ...pendingVoiceCalls.keys()])) removeVoicePeer(peerId);
     activeVoiceCalls.clear();
     voicePeers.clear();
   });
   const syncVoicePeers = () => {
     if (!getVoiceChannelId || session.isDisposed) return;
-    for (const id of [...activeVoiceCalls.keys()]) if (!sameVoiceChannel(id)) removeVoicePeer(id);
+    for (const id of [...activeVoiceCalls.keys()]) if (!isAuthorizedPeer(id) || !sameVoiceChannel(id)) removeVoicePeer(id);
+    for (const [id, { call }] of [...pendingVoiceCalls]) {
+      if (!isAuthorizedPeer(id) || !voiceManager.isInVoice || !voiceManager.localStream || call.metadata?.voiceChannelId !== getVoiceChannelId()) clearPendingVoiceCall(id);
+      else if (sameVoiceChannel(id)) {
+        clearPendingVoiceCall(id, false);
+        call.answer(voiceManager.localStream);
+        bindVoiceCall(call);
+      }
+    }
     for (const id of getVoicePeerIds()) if (sameVoiceChannel(id)) connectVoiceTo(id);
   };
 
@@ -195,7 +239,7 @@ export function bindSessionMessageHandlers(session, {
     bindVoiceCall,
     connectVoiceTo,
     syncVoicePeers,
-    closeVoiceCalls() { for (const id of [...activeVoiceCalls.keys()]) removeVoicePeer(id); },
+    closeVoiceCalls() { for (const id of new Set([...activeVoiceCalls.keys(), ...pendingVoiceCalls.keys()])) removeVoicePeer(id); },
     answerVoiceCall(call) {
       if (!call || !voiceManager) return false;
       if (typeof isAuthorizedPeer === 'function' && !isAuthorizedPeer(call.peer)) {
@@ -204,9 +248,20 @@ export function bindSessionMessageHandlers(session, {
         return false;
       }
       const stream = voiceManager.isInVoice ? voiceManager.localStream : null;
-      if (!stream || session.isDisposed || !sameVoiceChannel(call.peer) ||
+      if (!stream || session.isDisposed ||
           (getVoiceChannelId && call.metadata?.voiceChannelId !== getVoiceChannelId())) {
         try { call.close(); } catch (_) {}
+        return false;
+      }
+      if (!sameVoiceChannel(call.peer)) {
+        // Data presence and the media offer travel independently. Wait for
+        // verified matching presence; do not answer or expose audio meanwhile.
+        clearPendingVoiceCall(call.peer);
+        const pending = { call, timer: setTimeout(() => clearPendingVoiceCall(call.peer), negotiationTimeoutMs) };
+        pendingVoiceCalls.set(call.peer, pending);
+        const release = () => { if (pendingVoiceCalls.get(call.peer) === pending) clearPendingVoiceCall(call.peer, false); };
+        call.on('close', release);
+        call.on('error', release);
         return false;
       }
       call.answer(stream);

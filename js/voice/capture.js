@@ -77,27 +77,7 @@ async joinVoice({ peerId, name = 'Você', role = 'host', customStream = null, in
 
       this.isInVoice = true;
 
-      // SEGURANÇA / PRIVACIDADE (A07): Se estiver em modo PTT e a tecla não estiver ativa,
-      // inicializa o microfone mutado para não vazar áudio ao entrar ou reconectar
-      if (this.voiceMode === 'ptt' && !this.isPttActive) {
-        this.isMuted = true;
-      }
-
-      if (this.rawLocalStream) {
-        this.rawLocalStream.getAudioTracks().forEach((track) => {
-          track.enabled = !this.isMuted;
-        });
-      }
-      if (this.localStream && this.localStream !== this.rawLocalStream) {
-        this.localStream.getAudioTracks().forEach((track) => {
-          track.enabled = !this.isMuted;
-        });
-      }
-      if (this.processedStream) {
-        this.processedStream.getAudioTracks().forEach((track) => {
-          track.enabled = !this.isMuted;
-        });
-      }
+      this.applyMicrophoneMute();
 
       // Registra a si mesmo como participante local
       this.participants.set(this.myPeerId, {
@@ -209,6 +189,7 @@ leaveVoice() {
 
     this.participants.clear();
     this.isInVoice = false;
+    this.isManuallyMuted = false;
     if (this.voiceMode === 'ptt') {
       this.isMuted = true;
       this.isPttActive = false;

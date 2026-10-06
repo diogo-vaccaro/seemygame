@@ -24,6 +24,7 @@ constructor({ roomId = 'general', userName = null, clientSessionId = null, roomP
     this.voiceChannelId = null;
     this.voiceChannels = new Map(DEFAULT_VOICE_CHANNELS.map(c => [c.id, { ...c }]));
     this.voiceChannelsRevision = 0;
+    this.voiceCatalogConnection = null;
 
     // Estado local da transmissão
     this.localStreamingState = {
@@ -66,6 +67,7 @@ constructor({ roomId = 'general', userName = null, clientSessionId = null, roomP
       pinAccepted: new Set(),
       joinRejected: new Set(),
       voiceChannelsUpdated: new Set(),
+      voiceChannelRemoved: new Set(),
       voiceChannelError: new Set()
     };
   }

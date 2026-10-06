@@ -8,7 +8,13 @@ toggleMute() {
   }
 
 setMuted(muted) {
-    this.isMuted = Boolean(muted);
+    this.isManuallyMuted = Boolean(muted);
+    return this.applyMicrophoneMute();
+  }
+
+applyMicrophoneMute() {
+    // Manual mute, deafen and the PTT gate have independent lifetimes.
+    this.isMuted = Boolean(this.isManuallyMuted || this.isDeafened || (this.voiceMode === 'ptt' && !this.isPttActive));
     if (this.rawLocalStream) {
       this.rawLocalStream.getAudioTracks().forEach((track) => {
         track.enabled = !this.isMuted;
@@ -51,19 +57,14 @@ setVoiceMode(mode) {
     const nextMode = mode === 'ptt' ? 'ptt' : 'vad';
     if (this.voiceMode !== nextMode) this.isPttActive = false;
     this.voiceMode = nextMode;
-    if (this.voiceMode === 'ptt' && !this.isPttActive) {
-      this.setMuted(true);
-    } else if (this.voiceMode === 'vad') {
-      this.setMuted(false);
-    }
-    this.emit('voiceStateChange', this.getLocalVoiceState());
+    this.applyMicrophoneMute();
     return this.voiceMode;
   }
 
 setPttActive(active) {
     if (this.voiceMode !== 'ptt') return false;
-    this.isPttActive = Boolean(active);
-    this.setMuted(!this.isPttActive);
+    this.isPttActive = Boolean(active && !this.isDeafened);
+    this.applyMicrophoneMute();
     return this.isPttActive;
   }
 
@@ -75,18 +76,14 @@ setDeafened(deafened) {
       this.applyParticipantVolume(peerId);
     }
 
-    // Padrão Discord: se ensurdecer, muta o microfone automaticamente
-    if (this.isDeafened && !this.isMuted) {
-      this.setMuted(true);
-    }
+    if (this.isDeafened) this.isPttActive = false;
 
     const me = this.participants.get(this.myPeerId);
     if (me) {
       me.isDeafened = this.isDeafened;
     }
 
-    this.emit('voiceStateChange', this.getLocalVoiceState());
-    this.emit('participantUpdate', this.getParticipantsList());
+    this.applyMicrophoneMute();
     return this.isDeafened;
   }
 
