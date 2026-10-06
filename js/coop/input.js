@@ -198,7 +198,12 @@ export function detectGamepadType(gamepadId) {
     id.includes('dualsense') ||
     id.includes('dualshock') ||
     id.includes('playstation') ||
-    id.includes('sony')
+    id.includes('sony') ||
+    id.includes('ps5') ||
+    id.includes('ps4') ||
+    id.includes('ps3') ||
+    id.includes('dual sense') ||
+    id.includes('dual shock')
   ) {
     return 'playstation';
   }

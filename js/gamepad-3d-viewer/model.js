@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createGamepadModel } from ".././gamepad-model-builder.js";
+import { createGamepadModel, getGamepadModelUrl } from ".././gamepad-model-builder.js";
 /** Gamepad3DViewer: model. State and lifetime remain owned by the composed engine. */
 export const withGamepad3DViewerModel = Base => class extends Base {
 _disposeHierarchy(rootObj) {
@@ -34,19 +34,21 @@ _disposeHierarchy(rootObj) {
   }
 
 _loadModel() {
+    const type = this.gamepadType || 'playstation';
     // 1. Instanciação inicial imediata do modelo procedural (0ms de latência)
-    const proceduralModel = createGamepadModel();
+    const proceduralModel = createGamepadModel(type);
     this._attachModel(proceduralModel);
     this.modelSource = 'procedural';
 
     // 2. Se houver URL do GLB e suporte a GLTFLoader, tenta carregar o GLB externo
     if (this.modelUrl && typeof GLTFLoader !== 'undefined') {
+      const currentUrl = this.modelUrl;
       try {
         const loader = new GLTFLoader();
         loader.load(
-          this.modelUrl,
+          currentUrl,
           (gltf) => {
-            if (this.isDestroyed || !this.controllerGroup) {
+            if (this.isDestroyed || !this.controllerGroup || this.modelUrl !== currentUrl) {
               if (gltf?.scene) this._disposeHierarchy(gltf.scene);
               return;
             }
@@ -75,6 +77,41 @@ _loadModel() {
       }
     }
   }
+
+setGamepadType(type) {
+    const norm = String(type || '').toLowerCase().trim();
+    const canonical = (norm === 'xbox' || norm === 'xinput') ? 'xbox'
+      : (norm === 'nintendo' || norm === 'switch' || norm === '8bitdo') ? 'nintendo'
+      : 'playstation';
+
+    if (this.gamepadType === canonical && this.controllerGroup && this.controllerGroup.children.length > 0) {
+      return;
+    }
+    this.gamepadType = canonical;
+    if (!this._customModelUrl) {
+      this.modelUrl = getGamepadModelUrl(canonical);
+    }
+
+    if (this.controllerGroup) {
+      while (this.controllerGroup.children.length > 0) {
+        const child = this.controllerGroup.children[0];
+        this.controllerGroup.remove(child);
+        this._disposeHierarchy(child);
+      }
+    }
+
+    if (this.isInitialized) {
+      this._loadModel();
+      if (this._cachedRawInputs) {
+        this._lastInputs = null;
+        this.updateInputs(this._cachedRawInputs);
+      }
+      if (typeof this.requestRender === 'function') {
+        this.requestRender();
+      }
+    }
+  }
+
 
 _attachModel(model) {
     this.controllerGroup.add(model);

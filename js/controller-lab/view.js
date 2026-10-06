@@ -143,7 +143,12 @@ export function createControllerLabView({ onClose, onInvite, onReady, onDevice, 
         button.title = name; button.dataset.pressed = String((state?.buttons?.[index] || 0) > .1);
         button.setAttribute('aria-label', `${name}${(state?.buttons?.[index] || 0) > .1 ? ' pressionado' : ''}`);
       }
-      viewers[slot]?.updateInputs(state || { connected: false, axes: [0, 0, 0, 0], buttons: [] });
+      if (viewers[slot]) {
+        if (type && type !== 'generic' && viewers[slot].gamepadType !== type) {
+          viewers[slot].setGamepadType?.(type);
+        }
+        viewers[slot].updateInputs(state || { connected: false, axes: [0, 0, 0, 0], buttons: [] });
+      }
     }
   }
   function updateDevices(pads, selectedIndex) {

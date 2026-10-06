@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { createGamepadModel } from ".././gamepad-model-builder.js";
+import { detectGamepadType } from '../coop/input.js';
 /** Gamepad3DViewer: mapping. State and lifetime remain owned by the composed engine. */
 export const withGamepad3DViewerMapping = Base => class extends Base {
 triggerRumble(intensity = 1.0) {
@@ -14,6 +15,13 @@ updateInputs(gamepadData = {}) {
     if (!this.isInitialized || this.isDestroyed || this._isElementHidden()) return;
     const data = gamepadData || {};
     this._cachedRawInputs = data;
+
+    if (data.device || data.id) {
+      const detected = detectGamepadType(data.device || data.id);
+      if (detected && detected !== 'generic' && detected !== this.gamepadType && typeof this.setGamepadType === 'function') {
+        this.setGamepadType(detected);
+      }
+    }
 
     const rawAxes = Array.isArray(data.axes) ? data.axes : [0, 0, 0, 0];
     const buttons = Array.isArray(data.buttons) ? data.buttons : [];

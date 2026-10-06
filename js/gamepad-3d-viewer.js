@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { createGamepadModel, GAMEPAD_MODEL_REVISION } from './gamepad-model-builder.js';
+import { createGamepadModel, GAMEPAD_MODEL_REVISION, getGamepadModelUrl } from './gamepad-model-builder.js';
+export { getGamepadModelUrl };
 
 import { withGamepad3DViewerModel } from './gamepad-3d-viewer/model.js';
 import { withGamepad3DViewerPointer } from './gamepad-3d-viewer/pointer.js';
@@ -12,7 +13,9 @@ constructor(options = {}) {
     this.container = options.container || null;
     this.canvas = options.canvas || null;
     this.renderer = options.renderer || null;
-    this.modelUrl = options.modelUrl === null ? null : (options.modelUrl || `css/assets/gamepad.glb?v=${GAMEPAD_MODEL_REVISION}`);
+    this._customModelUrl = options.modelUrl !== undefined;
+    this.gamepadType = options.gamepadType || 'playstation';
+    this.modelUrl = options.modelUrl === null ? null : (options.modelUrl || getGamepadModelUrl(this.gamepadType));
     this.modelSource = null;
     this.enableMouseTracking = options.enableMouseTracking !== false;
     this.fitToContainer = options.fitToContainer === true;
