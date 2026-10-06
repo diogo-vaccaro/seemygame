@@ -1,6 +1,14 @@
 export function captureVideoConstraints(settings) {
  return {width:{ideal:settings.width,max:settings.width},height:{ideal:settings.height,max:settings.height},frameRate:{ideal:settings.fps,max:settings.fps}};
 }
+/** Fit the actual capture inside the profile, preserving aspect ratio. */
+export function videoScaleForProfile(trackSettings = {}, profile = {}, fallback = 1) {
+ const ratios = ['width', 'height'].flatMap(axis => {
+  const source = Number(trackSettings[axis]), target = Number(profile[axis]);
+  return Number.isFinite(source) && source > 0 && Number.isFinite(target) && target > 0 ? [source / target] : [];
+ });
+ return ratios.length ? Math.max(1, ...ratios) : Math.max(1, Number(fallback) || 1);
+}
 const p=(values,q)=>{const sorted=values.filter(Number.isFinite).sort((a,b)=>a-b);return sorted.length?sorted[Math.ceil(q*sorted.length)-1]:null;};
 /** Evidence gate, not a hardware guarantee. A certificate is scoped to the recorded run conditions. */
 export function assessQuality(samples,{fps,width,height,codec,minSeconds=60}={}) {

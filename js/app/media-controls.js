@@ -59,7 +59,7 @@ export function applyLiveBitrateChange(compatibilityContext, isAutomatic = false
 
     compatibilityContext.activeMediaCalls.forEach((call) => {
       if (call && call.peerConnection) {
-        compatibilityContext.applySenderOptimizations(call.peerConnection, compatibilityContext.customBitrateBps, compatibilityContext.selectedProfile.fps, scaleFactor);
+        compatibilityContext.applySenderOptimizations(call.peerConnection, compatibilityContext.customBitrateBps, compatibilityContext.selectedProfile.fps, scaleFactor, compatibilityContext.selectedProfile?.degradationPreference || 'maintain-resolution');
       }
     });
   }

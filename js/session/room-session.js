@@ -1,7 +1,7 @@
-import { bindCaptureSettings, bindQualityCapabilities, readCaptureSettings } from '../capture/settings.js';
+import { bindCaptureSettings, bindQualityCapabilities, isNativeCaptureProvider, readCaptureSettings } from '../capture/settings.js';
 import { createInitialCodecTransform } from '../streaming/codecs.js';
 import { createQualityController } from '../streaming/adaptation.js';
-import { captureVideoConstraints } from '../streaming/quality.js';
+import { captureVideoConstraints, videoScaleForProfile } from '../streaming/quality.js';
 import { bindStreamingQuality } from '../streaming/settings-controller.js';
 import { initGreenRoomLobby as mountGreenRoomLobby } from '../app/green-room.js';
 import { getClientSessionId } from '../app/session-identity.js';
@@ -555,7 +555,16 @@ function sendRoomStream(memberId, conn, rm, session) {
   roomState.screenCalls.set(memberId, call);
   hookPeerConnectionSdp(call.peerConnection, () => settings.bitrateKbps * 1000);
   applyTransceiverOptimizations(call.peerConnection, 'ultra-low', settings.videoCodec || 'h264');
-  const stopTuning = applySenderOptimizationsWhenReady(call.peerConnection, () => settings.bitrateKbps * 1000, () => settings.fps);
+  const stopTuning = applySenderOptimizationsWhenReady(
+    call.peerConnection,
+    () => settings.bitrateKbps * 1000,
+    () => settings.fps,
+    () => {
+      const track = roomState.localStream?.getVideoTracks?.()[0];
+      return isNativeCaptureProvider(roomState.captureProvider) ? 1 : videoScaleForProfile(track?.getSettings?.(), roomState.captureSettings || settings);
+    },
+    () => (roomState.captureSettings || settings).degradationPreference || 'maintain-resolution'
+  );
   const quality = createQualityController(call.peerConnection, () => roomState.captureSettings || settings);
   startStatsMonitor(`send-${memberId}`, call.peerConnection, true, sample => quality.process(sample), { cardId: 'local-me', context: () => ({ requestedFps: (roomState.captureSettings || settings).fps, requestedCodec: settings.videoCodec }) });
   let unregisterCleanup;

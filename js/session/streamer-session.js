@@ -1,7 +1,7 @@
-import { bindCaptureSettings, bindQualityCapabilities, readCaptureSettings } from '../capture/settings.js';
+import { bindCaptureSettings, bindQualityCapabilities, isNativeCaptureProvider, readCaptureSettings } from '../capture/settings.js';
 import { createInitialCodecTransform } from '../streaming/codecs.js';
 import { createQualityController } from '../streaming/adaptation.js';
-import { captureVideoConstraints } from '../streaming/quality.js';
+import { captureVideoConstraints, videoScaleForProfile } from '../streaming/quality.js';
 import { bindStreamingQuality } from '../streaming/settings-controller.js';
 import { createStatsMonitorScope } from '../stats.js';
 import { bindSourcePicker } from '../capture/source-picker.js';
@@ -346,7 +346,16 @@ function callViewerWithStream(viewerId, session = streamerState.session) {
 
   hookPeerConnectionSdp(call.peerConnection);
   applyTransceiverOptimizations(call.peerConnection, 'ultra-low', readCaptureSettings().videoCodec || 'auto');
-  const stopTuning = applySenderOptimizationsWhenReady(call.peerConnection, () => streamerState.targetBitrateBps, () => streamerState.fpsTarget);
+  const stopTuning = applySenderOptimizationsWhenReady(
+    call.peerConnection,
+    () => streamerState.targetBitrateBps,
+    () => streamerState.fpsTarget,
+    () => {
+      const track = streamerState.localStream?.getVideoTracks?.()[0];
+      return isNativeCaptureProvider(streamerState.captureProvider) ? 1 : videoScaleForProfile(track?.getSettings?.(), readCaptureSettings());
+    },
+    () => readCaptureSettings().degradationPreference || 'maintain-resolution'
+  );
   const quality = createQualityController(call.peerConnection, () => ({ ...readCaptureSettings(), bitrateKbps: streamerState.targetBitrateBps / 1000, fps: streamerState.fpsTarget }));
   startStatsMonitor(`send-${viewerId}`, call.peerConnection, true, sample => quality.process(sample), { cardId: 'local-me', context: () => ({ requestedFps: streamerState.fpsTarget, requestedCodec: readCaptureSettings().videoCodec }) });
   const release = () => {
@@ -505,7 +514,8 @@ function setQualityProfile(profileName) {
         call.peerConnection,
         streamerState.targetBitrateBps,
         streamerState.fpsTarget,
-        profile.scaleFactor || 1
+        isNativeCaptureProvider(streamerState.captureProvider) ? 1 : videoScaleForProfile(streamerState.localStream?.getVideoTracks?.()[0]?.getSettings?.(), profile),
+        readCaptureSettings().degradationPreference || 'maintain-resolution'
       );
     }
   }
@@ -529,7 +539,7 @@ async function initStreamerApp(options = {}) {
   session.registerCleanup(() => statsScope.dispose());
   bindQualityCapabilities(session);
   bindCaptureSettings(session, () => streamerState.captureProvider, showToast);
-  bindStreamingQuality(session, { getStream: () => streamerState.localStream, getProvider: () => streamerState.captureProvider, getCalls: () => streamerState.activeCalls.values(), onSettings: settings => { streamerState.fpsTarget = settings.fps; streamerState.targetBitrateBps = settings.bitrateKbps * 1000; }, showToast });
+  bindStreamingQuality(session, { getStream: () => streamerState.localStream, getProvider: () => streamerState.captureProvider, getCalls: () => streamerState.activeCalls.values(), onSettings: settings => { streamerState.currentProfile = document.getElementById('quality-preset')?.value || 'balanced'; streamerState.fpsTarget = settings.fps; streamerState.targetBitrateBps = settings.bitrateKbps * 1000; }, showToast });
   installNativeCaptureBridge();
   const sourcePicker = bindSourcePicker(session, {
     start: captureOptions => startCapture(captureOptions.sourceId, captureOptions, session),
@@ -605,13 +615,6 @@ async function initStreamerApp(options = {}) {
     const onStreamClick = () => sourcePicker.toggle().catch(error => showToast(error.message, 'error'));
     streamBtn.addEventListener('click', onStreamClick);
     session.registerCleanup(() => streamBtn.removeEventListener('click', onStreamClick));
-  }
-
-  const qualitySelect = document.getElementById('quality-preset');
-  if (qualitySelect) {
-    const onQualityChange = (e) => setQualityProfile(e.target.value);
-    qualitySelect.addEventListener('change', onQualityChange);
-    session.registerCleanup(() => qualitySelect.removeEventListener('change', onQualityChange));
   }
 
   const bitrateSlider = document.getElementById('bitrate-slider');

@@ -1,5 +1,5 @@
 import { configureVideoCodecs } from '../streaming/codecs.js';
-import { mutateVideoSender } from '../streaming/sender-parameters.js';
+import { mutateVideoSender, getSenderParameterStatus } from '../streaming/sender-parameters.js';
 /** Codec preference is a capability hint; getStats is the negotiated truth. */
 export function applyTransceiverOptimizations(pc,latencyMode='ultra-low',preferredCodec='h264') {
  if(!pc?.getTransceivers)return [];
@@ -15,7 +15,7 @@ export function applyTransceiverOptimizations(pc,latencyMode='ultra-low',preferr
  return results;
 }
 
-export async function applySenderOptimizations(pc, bitrateBps, fps = 60, scaleResolutionDownBy = 1) {
+export async function applySenderOptimizations(pc, bitrateBps, fps = 60, scaleResolutionDownBy = 1, degradationPreference = 'maintain-resolution') {
   if (!pc) return false;
 
   let applied = false;
@@ -26,7 +26,7 @@ export async function applySenderOptimizations(pc, bitrateBps, fps = 60, scaleRe
         sender.track.contentHint = 'motion';
 
         const ok = await mutateVideoSender(sender, params => {
-          params.degradationPreference = 'maintain-framerate';
+          params.degradationPreference = degradationPreference || 'maintain-resolution';
           for (const encoding of params.encodings) {
             encoding.maxFramerate = Math.max(1, Math.min(120, Number(fps) || 60));
             encoding.maxBitrate = Math.max(256000, Math.min(50000000, Number(bitrateBps) || 7500000));
@@ -35,7 +35,7 @@ export async function applySenderOptimizations(pc, bitrateBps, fps = 60, scaleRe
           }
         });
         applied ||= ok;
-        console.log(`[FPS Target] Alvo: ${fps} FPS | Bitrate: ${(bitrateBps / 1000000).toFixed(1)} Mbps | Escala: ${scaleResolutionDownBy || 1}x`);
+        console.log(`[FPS Target] Alvo: ${fps} FPS | Bitrate: ${(bitrateBps / 1000000).toFixed(1)} Mbps | Escala: ${scaleResolutionDownBy || 1}x | Adaptação solicitada: ${degradationPreference || 'maintain-resolution'} | Efetiva: ${getSenderParameterStatus(sender)?.effectiveDegradationPreference || 'não informada'}`);
       }
     }
     return applied;
@@ -45,7 +45,7 @@ export async function applySenderOptimizations(pc, bitrateBps, fps = 60, scaleRe
   }
 }
 
-export function applySenderOptimizationsWhenReady(pc, getBitrateBps, getFps = 60, getScaleFactor = 1) {
+export function applySenderOptimizationsWhenReady(pc, getBitrateBps, getFps = 60, getScaleFactor = 1, getDegradationPreference = 'maintain-resolution') {
   if (!pc) return () => {};
 
   let cancelled = false;
@@ -62,9 +62,10 @@ export function applySenderOptimizationsWhenReady(pc, getBitrateBps, getFps = 60
     const bitrate = typeof getBitrateBps === 'function' ? getBitrateBps() : getBitrateBps;
     const fps = typeof getFps === 'function' ? getFps() : getFps;
     const scale = typeof getScaleFactor === 'function' ? getScaleFactor() : getScaleFactor;
+    const degradation = typeof getDegradationPreference === 'function' ? getDegradationPreference() : getDegradationPreference;
 
     try {
-      const ok = await applySenderOptimizations(pc, bitrate, fps, scale);
+      const ok = await applySenderOptimizations(pc, bitrate, fps, scale, degradation);
       if (ok) {
         cleanup();
       }

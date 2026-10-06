@@ -496,7 +496,7 @@
       <button type="button" class="streaming-help-button" data-streaming-help="capture-method-help" aria-label="Entender WGC e DXGI" aria-describedby="capture-method-help" aria-expanded="false">?</button>
     </div>
     <select id="capture-method-select" class="custom-id-field" aria-describedby="capture-method-note">
-      <option value="auto" selected>Automático — WGC atualmente</option>
+      <option value="auto" selected>Automático — DXGI em monitor, WGC em janela</option>
       <option value="wgc">WGC — janela ou monitor</option>
       <option value="dxgi">DXGI — somente monitor inteiro</option>
     </select>
@@ -504,14 +504,35 @@
     <div id="capture-method-help" class="streaming-option-tooltip" role="tooltip" popover="manual" hidden>
       <strong>Método: de onde vêm os frames</strong>
       <dl>
-        <dt>Automático</dt><dd>Usa WGC para janelas e monitores. Esse padrão será reavaliado após os testes de DXGI em jogos reais.</dd>
+        <dt>Automático</dt><dd>Tenta DXGI para monitor inteiro e WGC se houver falha. Usa WGC para janelas. O resultado depende do hardware, driver e carga.</dd>
         <dt>WGC — Windows Graphics Capture</dt><dd>Captura uma janela específica ou um monitor. É necessário para compartilhar somente uma janela.</dd>
         <dt>DXGI — Desktop Duplication</dt><dd>Captura o monitor inteiro, incluindo todas as janelas que aparecerem nele. Pode melhorar a fluidez sob carga, mas depende da GPU, do driver e do jogo. Não é uma captura isolada de janela.</dd>
       </dl>
       <p>Disponível no app desktop. A escolha é aplicada ao iniciar a transmissão; não garante prioridade de GPU/CPU nem altera o codec ou encoder.</p>
     </div>
   </div>
-  <p class="streaming-options-footer">O diagnóstico confirma o codec, encoder e caminho realmente ativos. Alterações de codec, encoder, API gráfica ou método de captura passam a valer ao reiniciar a transmissão.</p>
+  <div id="degradation-preference-group" class="streaming-option">
+    <div class="streaming-option-label">
+      <label for="degradation-preference-select">Adaptação sob oscilação <span>Estabilidade de resolução</span></label>
+      <button type="button" class="streaming-help-button" data-streaming-help="degradation-help" aria-label="Entender a adaptação sob oscilação" aria-describedby="degradation-help" aria-expanded="false">?</button>
+    </div>
+    <select id="degradation-preference-select" class="custom-id-field" aria-describedby="degradation-preference-note">
+      <option value="maintain-resolution" selected>Priorizar resolução — pode reduzir FPS</option>
+      <option value="maintain-framerate">Manter taxa de quadros — fluidez de FPS (pode reduzir resolução)</option>
+      <option value="balanced">Equilibrado — reduz FPS e resolução</option>
+    </select>
+    <p id="degradation-preference-note" class="streaming-option-note"></p>
+    <div id="degradation-help" class="streaming-option-tooltip" role="tooltip" popover="manual" hidden>
+      <strong>Adaptação: o que priorizar sob estresse de rede ou CPU</strong>
+      <dl>
+        <dt>Manter resolução</dt><dd>Prefere reduzir FPS para preservar a resolução escolhida. Falta de banda ou recursos também pode reduzir a qualidade da imagem; não garante nitidez ou fluidez constantes.</dd>
+        <dt>Manter taxa de quadros</dt><dd>Prefere reduzir a resolução para preservar movimento. Não garante 60/120 FPS quando a captura, o encoder ou a rede estão sobrecarregados.</dd>
+        <dt>Equilibrado</dt><dd>Permite ao navegador equilibrar a redução entre resolução e taxa de quadros conforme a conexão.</dd>
+      </dl>
+      <p>Aplica-se aos envios WebRTC pelo navegador sem reiniciar a captura. No envio nativo direto, a adaptação do encoder Rust é independente desta preferência. O diagnóstico exportado registra a preferência solicitada e a efetiva.</p>
+    </div>
+  </div>
+  <p class="streaming-options-footer">O diagnóstico confirma o codec, encoder e caminho realmente ativos. Alterações de codec, encoder, API gráfica ou método de captura passam a valer ao reiniciar a transmissão; a adaptação sob oscilação aplica-se aos envios pelo navegador.</p>
 </section>
 
 <!-- smg:end -->

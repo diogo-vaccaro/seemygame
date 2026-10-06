@@ -147,7 +147,7 @@ export function initiateMediaCallToViewer(compatibilityContext, viewerPeerId) {
         } else if (compatibilityContext.selectedProfile.height && compatibilityContext.selectedProfile.height < 1080) {
           scaleFactor = Number((1080 / compatibilityContext.selectedProfile.height).toFixed(2));
         }
-        compatibilityContext.applySenderOptimizations(call.peerConnection, compatibilityContext.customBitrateBps, compatibilityContext.selectedProfile.fps, scaleFactor);
+        compatibilityContext.applySenderOptimizations(call.peerConnection, compatibilityContext.customBitrateBps, compatibilityContext.selectedProfile.fps, scaleFactor, compatibilityContext.selectedProfile?.degradationPreference || 'maintain-resolution');
       }, 300);
     }
 

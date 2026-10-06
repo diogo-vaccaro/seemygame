@@ -1,7 +1,7 @@
 import { isDesktopApp, getNativeCaptureCapabilities } from '../desktop.js';
 import { getVideoCapabilities, selectCodec } from './codecs.js';
 
-const preferences = { 'video-codec-select': 'seemygame_video_codec', 'h264-encoder-select': 'seemygame_h264_encoder', 'capture-backend-select': 'seemygame_capture_backend', 'capture-method-select': 'seemygame_capture_method' };
+const preferences = { 'video-codec-select': 'seemygame_video_codec', 'h264-encoder-select': 'seemygame_h264_encoder', 'capture-backend-select': 'seemygame_capture_backend', 'capture-method-select': 'seemygame_capture_method', 'degradation-preference-select': 'seemygame_degradation_preference' };
 const codecCopy = {
   auto: 'Prefere um formato compatível. O diagnóstico confirma o codec negociado.',
   h264: 'Ampla compatibilidade. O encoder pode ser NVENC, Media Foundation ou CPU no app.',
@@ -61,9 +61,18 @@ export function syncStreamingOptions({ desktop = isDesktopApp(), capabilities = 
       ? 'Somente monitor inteiro: tudo que aparecer nele será compartilhado. Para uma janela, escolha WGC ou Automático. Aplicado ao reiniciar.'
       : method?.value === 'wgc'
         ? 'Captura uma janela específica ou um monitor pelo Windows. Aplicado ao reiniciar.'
-        : 'Usa WGC para janelas e monitores. DXGI permanece uma alternativa avançada em validação.');
+        : 'Tenta DXGI para monitor inteiro, com recuperação por WGC se falhar. Usa WGC para janelas; o FPS depende do hardware e da carga.');
+  const degradation = document.getElementById('degradation-preference-select');
+  if (degradation) {
+    const degCopy = {
+      'maintain-resolution': 'Prioriza a resolução escolhida no envio pelo navegador. Sob falta de banda ou recursos, pode reduzir FPS e qualidade; não garante nitidez constante.',
+      'maintain-framerate': 'Prioriza taxa de quadros contínua (60/120 FPS). O navegador pode reduzir a resolução dinamicamente sob estresse ou oscilação de banda.',
+      'balanced': 'Equilibrado. O navegador reduz gradualmente tanto a resolução quanto a taxa de quadros sob sobrecarga.'
+    }[degradation.value || 'maintain-resolution'] || '';
+    setNote('degradation-preference-note', degCopy + (desktop ? ' No envio nativo direto, esta preferência do navegador não altera o encoder Rust.' : ' Confira a preferência efetiva no diagnóstico exportado.'));
+  }
   // Preserve the selected explanation when the user hovers the actual field.
-  for (const [select, note] of [[codec, 'video-codec-note'], [encoder, 'h264-encoder-note'], [api, 'capture-backend-note'], [method, 'capture-method-note']]) if (select) select.title = document.getElementById(note)?.textContent || '';
+  for (const [select, note] of [[codec, 'video-codec-note'], [encoder, 'h264-encoder-note'], [api, 'capture-backend-note'], [method, 'capture-method-note'], [degradation, 'degradation-preference-note']]) if (select) select.title = document.getElementById(note)?.textContent || '';
 }
 
 export function bindStreamingOptions(session, { desktop = isDesktopApp(), loadCapabilities = getNativeCaptureCapabilities } = {}) {

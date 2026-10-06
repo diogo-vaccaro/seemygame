@@ -3,6 +3,7 @@ import { renderStatsHud } from './hud.js';
 import { observePresentation } from './presentation.js';
 import { createDiagnostic, downloadDiagnostic, safeSample } from './diagnostic.js';
 import { diagnoseSample } from './diagnosis.js';
+import { getSenderParameterStatus } from '../streaming/sender-parameters.js';
 /** Bounded, session-owned history and no overlapping async stats polls. */
 export function createStatsMonitorScope({historyLimit=120}={}) {
  const monitors=new Map(),metrics=new Map(),histories=new Map(),cards=new Map();
@@ -43,6 +44,10 @@ export function createStatsMonitorScope({historyLimit=120}={}) {
     const video=options.video||(!isLocal&&card?.querySelector('video'));
     if(video&&e.video!==video){e.presentation?.dispose();e.video=video;e.presentation=observePresentation(video);}
     const sample={...collectPeerMetrics(reports,{peerId:id,isLocal,previous:metrics.get(id),now:performance.now()}),...e.presentation?.sample(),...options.context?.()};
+    if(isLocal) {
+     const sender=pc.getSenders?.().find(sender=>sender.track?.kind==='video');
+     Object.assign(sample,sender?getSenderParameterStatus(sender):null);
+    }
     sample.diagnosis=diagnoseSample(sample);
     metrics.set(id,sample);const history=histories.get(id);history.push(safeSample(sample));if(history.length>historyLimit)history.shift();
     renderCard(cardId,id,isLocal,sample);onTelemetry?.(sample);

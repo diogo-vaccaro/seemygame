@@ -4,7 +4,7 @@ export function createStatsHud(peerId) {
  const header=document.createElement('div');header.className='stats-heading';header.textContent='Diagnóstico ao vivo';hud.appendChild(header);
  const source=document.createElement('select');source.className='stats-source';source.setAttribute('aria-label','Conexão exibida no diagnóstico');source.hidden=true;hud.append(source);
  const main=[['fps','FPS do vídeo'],['rtt','RTT da rede'],['bitrate','Bitrate'],['res','Resolução'],['codec','Codec ativo']];
- const details=[['presented','FPS apresentados'],['encode','Encode / frame'],['decode','Decode / frame'],['jitter','Jitter RTP'],['buffer','Buffer de jitter'],['frametime','Frametime p95'],['pause','Maior pausa'],['loss','Pacotes perdidos'],['quality','Limitação'],['implementation','Encoder / decoder']];
+ const details=[['presented','FPS apresentados'],['encode','Encode / frame'],['decode','Decode / frame'],['jitter','Jitter RTP'],['buffer','Buffer de jitter'],['frametime','Frametime p95'],['pause','Maior pausa'],['loss','Pacotes perdidos'],['quality','Limitação'],['implementation','Encoder / decoder'],['adaptation-requested','Adaptação pedida'],['adaptation-effective','Adaptação ativa']];
  const add=(target,[key,label])=>{
   const row=document.createElement('div');row.className='stats-row';
   const caption=document.createElement('span');caption.className='stats-label';caption.textContent=label;
@@ -24,6 +24,8 @@ export function renderStatsHud(peerId,isLocal,m,history=[]) {
  if(typeof document==='undefined')return;
  const values={rtt:m.rtt===null||m.rtt===undefined?'N/D':`${m.rtt} ms`,fps:m.fps===null||m.fps===undefined?'N/D':`${m.fps} FPS`,bitrate:m.bitrateText?m.bitrateText==='N/D'?'N/D':`${m.bitrateText} Mbps${isLocal?' (Envio)':''}`:'N/D',res:m.width&&m.height?`${m.width}x${m.height}`:'N/D',codec:m.codec?.replace(/^video\//i,'').toUpperCase()||'Aguardando negociação',presented:number(m.presentedFps,'FPS'),encode:number(m.encodeTimeMs),decode:number(m.decodeTimeMs),jitter:number(m.jitterMs),buffer:number(m.jitterBufferDelayMs),frametime:number(m.frametimeP95Ms),pause:number(m.maxPauseMs),loss:m.packetsLost==null?'N/D':`${m.packetsLost} perdidos`,quality:m.sampleError?'Sem amostra':m.qualityReason==='none'?'Normal':m.qualityReason?.toUpperCase()||'N/D',implementation:m.encoderImplementation||m.decoderImplementation||'N/D'};
  for(const [key,value] of Object.entries(values)){const elem=document.getElementById(`stat-${key}-${peerId}`);if(elem)elem.innerText=value;}
+ const adaptationLabels={'maintain-resolution':'Resolução','maintain-framerate':'FPS',balanced:'Equilibrada'};
+ for(const [key,value] of [['adaptation-requested',adaptationLabels[m.requestedDegradationPreference]||'N/D'],['adaptation-effective',adaptationLabels[m.effectiveDegradationPreference]||(m.requestedDegradationPreference?'Padrão do navegador':'N/D')]]){const elem=document.getElementById(`stat-${key}-${peerId}`);if(elem)elem.innerText=value;}
  for(const [key,value] of [['produced',number(m.producedFps,'FPS')],['producer-gap',number(m.producerMaxPauseMs)],['producer-age',number(m.producerFrameAgeMs)]]){const elem=document.getElementById(`stat-${key}-${peerId}`);if(elem)elem.innerText=value;}
  const diagnosis=document.getElementById(`stat-diagnosis-${peerId}`);if(diagnosis)diagnosis.textContent=m.diagnosis?`Hipótese: ${m.diagnosis.message}`:'Aguardando amostras';
  const hud=document.getElementById(`card-${peerId}`)?.querySelector('.stats-hud');if(!hud)return;

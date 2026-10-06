@@ -1,6 +1,11 @@
 import { QUALITY_PROFILES, DEFAULT_PROFILE } from '../config.js';
 import { bindStreamingOptions } from '../streaming/options-ui.js';
 
+/** A browser provider also owns a session; only native output is sized in Rust. */
+export function isNativeCaptureProvider(provider) {
+  return provider?.session?.provider === 'native';
+}
+
 /** Shared capture settings for browser and native providers. */
 export function readCaptureSettings(root = document) {
   const value = id => root.getElementById(id)?.value;
@@ -14,6 +19,7 @@ export function readCaptureSettings(root = document) {
     h264Encoder: value('h264-encoder-select') || null,
     captureBackend: value('capture-backend-select') || null,
     captureApi: value('capture-method-select') || null,
+    degradationPreference: value('degradation-preference-select') || 'maintain-resolution',
     showCursor: root.getElementById('capture-cursor-toggle')?.checked !== false,
     excludeApp: value('picker-audio-exclude-select') || value('audio-exclude-select') || null
   };
@@ -27,7 +33,7 @@ export function bindCaptureSettings(session, getProvider, showToast) {
   for (const id of ['quality-preset', 'bitrate-slider', 'audio-mode-select', 'video-codec-select', 'h264-encoder-select', 'capture-backend-select', 'capture-method-select', 'capture-cursor-toggle', 'audio-exclude-select']) {
     session.addEventListener(document.getElementById(id), 'change', () => {
       const provider = getProvider();
-      if (!provider?.session) return;
+      if (!isNativeCaptureProvider(provider)) return;
       if (id === 'video-codec-select') return;
       if (id === 'h264-encoder-select') { showToast('O novo encoder será usado ao reiniciar a transmissão.', 'info'); return; }
       if (id === 'capture-backend-select') { showToast('A nova API gráfica será usada ao reiniciar a transmissão.', 'info'); return; }
@@ -39,7 +45,7 @@ export function bindCaptureSettings(session, getProvider, showToast) {
       settings.captureBackend = provider.requestedSettings?.captureBackend || null;
       settings.captureApi = provider.requestedSettings?.captureApi || provider.session.captureApi || null;
       pending = pending.then(async () => {
-        if (!session.isDisposed && getProvider() === provider && provider.session) await provider.reconfigure(settings);
+        if (!session.isDisposed && getProvider() === provider && isNativeCaptureProvider(provider)) await provider.reconfigure(settings);
       }).catch(error => showToast(error.message, 'error'));
     });
   }
