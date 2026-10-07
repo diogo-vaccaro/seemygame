@@ -196,6 +196,10 @@ setUserMuted(peerId, isMuted) {
     return muted;
   }
 
+  setUserLocallyMuted(peerId, isMuted) {
+    return this.setUserMuted(peerId, isMuted);
+  }
+
 applyParticipantVolume(peerId) {
     const p = this.participants.get(peerId);
     if (!p || p.isLocal || !p.audioElem) return;
