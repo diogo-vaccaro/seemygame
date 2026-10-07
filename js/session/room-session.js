@@ -486,6 +486,20 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
     if (!handled && rm.isPeerAuthorized(conn.peer)) {
       if (message?.type === 'REQUEST_STREAM') {
         if (roomState.localStream && conn.open) {
+          const existingCall = roomState.screenCalls.get(conn.peer);
+          const pc = existingCall?.peerConnection;
+          const isStuckOrFailed = existingCall && (
+            !pc ||
+            pc.connectionState === 'failed' ||
+            pc.connectionState === 'closed' ||
+            pc.iceConnectionState === 'failed' ||
+            pc.iceConnectionState === 'disconnected'
+          );
+          if (isStuckOrFailed) {
+            console.warn(`[Room] REQUEST_STREAM recebido para chamada em estado '${pc?.connectionState || pc?.iceConnectionState}'. Reiniciando chamada com ${conn.peer}...`);
+            try { existingCall.close(); } catch (_) {}
+            roomState.screenCalls.delete(conn.peer);
+          }
           sendRoomStream(conn.peer, conn, rm, session);
         }
         return;
@@ -551,6 +565,19 @@ function handleRoomMediaCall(call, rm, session) {
       onCoopClick: peerId => toggleCoopCardControl(coopController, peerId, rm.meshConnections.get(peerId)) });
     session?.eventBus.emit('stream:received', { hostId: call.peer, stream });
   });
+  if (pc) {
+    pc.addEventListener?.('iceconnectionstatechange', () => {
+      const state = pc.iceConnectionState;
+      console.log(`[Room Media Receiver] ICE com ${call.peer}: ${state}`);
+      if (state === 'failed') {
+        const conn = rm.meshConnections.get(call.peer);
+        if (conn && conn.open) {
+          console.warn(`[Room Media Receiver] ICE falhou com ${call.peer}. Solicitando novo stream...`);
+          try { sendSessionMessage(session, conn, { type: 'REQUEST_STREAM' }); } catch (_) {}
+        }
+      }
+    });
+  }
   let unregisterCleanup;
   const release = () => { unregisterCleanup?.(); releaseRoomRemoteStream(call.peer, call, session); };
   unregisterCleanup = session?.registerCleanup(() => { release(); try { call.close(); } catch (_) {} });
@@ -585,7 +612,16 @@ function closeRoomScreenCalls(peerId, session) {
 function sendRoomStream(memberId, conn, rm, session) {
   if (!roomState.localStream || session?.isDisposed || !conn?.open || !rm.isPeerAuthorized(memberId)) return;
   if (roomState.features?.nativeMedia.broadcastTo(conn)) return;
-  if (roomState.screenCalls.has(memberId)) return;
+  const existingCall = roomState.screenCalls.get(memberId);
+  if (existingCall) {
+    const pc = existingCall.peerConnection;
+    if (pc?.connectionState === 'closed' || pc?.connectionState === 'failed' || pc?.iceConnectionState === 'failed') {
+      try { existingCall.close(); } catch (_) {}
+      roomState.screenCalls.delete(memberId);
+    } else {
+      return;
+    }
+  }
   const settings = roomState.captureSettings || readCaptureSettings();
   const call = roomState.peer?.call(memberId, roomState.localStream, {
     metadata: { type: 'ROOM_STREAM', name: rm.userName },
@@ -606,7 +642,14 @@ function sendRoomStream(memberId, conn, rm, session) {
     () => (roomState.captureSettings || settings).degradationPreference || 'maintain-resolution'
   );
   const quality = createQualityController(call.peerConnection, () => roomState.captureSettings || settings);
-  startStatsMonitor(`send-${memberId}`, call.peerConnection, true, sample => quality.process(sample), { cardId: 'local-me', context: () => ({ requestedFps: (roomState.captureSettings || settings).fps, requestedCodec: settings.videoCodec }) });
+  startStatsMonitor(`send-${memberId}`, call.peerConnection, true, sample => quality.process(sample), {
+    cardId: 'local-me',
+    context: () => ({
+      requestedFps: (roomState.captureSettings || settings).fps,
+      requestedCodec: settings.videoCodec,
+      iceConnectionState: call.peerConnection?.iceConnectionState
+    })
+  });
   let unregisterCleanup;
   const release = () => {
     stopTuning();
@@ -617,6 +660,26 @@ function sendRoomStream(memberId, conn, rm, session) {
       roomState.screenCalls.delete(memberId);
     }
   };
+  const pc = call.peerConnection;
+  if (pc) {
+    const onIceState = () => {
+      const state = pc.iceConnectionState;
+      console.log(`[Room Media Sender] ICE com ${memberId}: ${state}`);
+      if (state === 'failed') {
+        console.warn(`[Room Media Sender] ICE falhou com ${memberId}.`);
+        try { pc.restartIce?.(); } catch (_) {}
+      }
+    };
+    const onConnState = () => {
+      const state = pc.connectionState;
+      console.log(`[Room Media Sender] Conexão com ${memberId}: ${state}`);
+      if (state === 'failed' || state === 'closed') {
+        release();
+      }
+    };
+    pc.addEventListener?.('iceconnectionstatechange', onIceState);
+    pc.addEventListener?.('connectionstatechange', onConnState);
+  }
   unregisterCleanup = session?.registerCleanup(() => { release(); try { call.close(); } catch (_) {} });
   call.on('close', release);
   call.on('error', release);

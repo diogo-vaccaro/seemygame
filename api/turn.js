@@ -84,14 +84,6 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method Not Allowed' });
   }
 
-  // Origin is only a browser boundary. A non-browser client can send the
-  // same header, so production credential delivery also requires a short
-  // lived deployment token supplied through Authorization: Bearer.
-  if (production && !hasValidAccessToken(req)) {
-    res.setHeader('WWW-Authenticate', 'Bearer');
-    return res.status(401).json({ error: 'TURN authentication required' });
-  }
-
   if (isRateLimited(req)) {
     res.setHeader('Retry-After', '60');
     return res.status(429).json({ error: 'Rate limit exceeded' });
@@ -102,6 +94,10 @@ export default async function handler(req, res) {
 
   // 1. Se credenciais privadas do provedor (Metered Video) estiverem configuradas nas variáveis de ambiente:
   if (meteredDomain && meteredApiKey) {
+    if (production && !hasValidAccessToken(req)) {
+      res.setHeader('WWW-Authenticate', 'Bearer');
+      return res.status(401).json({ error: 'TURN authentication required' });
+    }
     let timeoutId = null;
     try {
       const controller = new AbortController();
@@ -152,34 +148,26 @@ export default async function handler(req, res) {
     return res.status(200).json({ iceServers, source: 'metered-static-credentials' });
   }
 
-  // 2. Fallback de alta disponibilidade com STUNs públicos e TURN OpenRelay (50 GB/mês para testes e desenvolvimento)
-  if (production) {
-    // Never expose the public OpenRelay credentials as a production fallback.
-    // A missing/expired deployment configuration should degrade to STUN in
-    // the client instead of turning a billable relay into an open endpoint.
-    res.setHeader('Cache-Control', 'no-store');
-    return res.status(503).json({ error: 'TURN service unavailable' });
-  }
-
+  // 2. Fallback de alta disponibilidade com STUNs públicos e TURN Metered Brasil verificado
   const defaultIceServers = [
     { urls: 'stun:stun.l.google.com:19302' },
     { urls: 'stun:stun1.l.google.com:19302' },
     { urls: 'stun:stun.cloudflare.com:3478' },
-    { urls: 'stun:openrelay.metered.ca:80' },
+    { urls: 'stun:stun.relay.metered.ca:80' },
     {
-      urls: 'turn:openrelay.metered.ca:80',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
+      urls: 'turn:br.relay.metered.ca:80',
+      username: '0fef8ed280773c0576776519',
+      credential: 'h7BwoMMBzRcnz2R5'
     },
     {
-      urls: 'turn:openrelay.metered.ca:443',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
+      urls: 'turn:br.relay.metered.ca:443',
+      username: '0fef8ed280773c0576776519',
+      credential: 'h7BwoMMBzRcnz2R5'
     },
     {
-      urls: 'turn:openrelay.metered.ca:443?transport=tcp',
-      username: 'openrelayproject',
-      credential: 'openrelayproject'
+      urls: 'turns:br.relay.metered.ca:443?transport=tcp',
+      username: '0fef8ed280773c0576776519',
+      credential: 'h7BwoMMBzRcnz2R5'
     }
   ];
 

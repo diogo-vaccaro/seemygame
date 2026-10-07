@@ -148,9 +148,9 @@ describe('Módulo: desktop.js (Tauri v2 / Rust Integration)', () => {
         expect(payload.negotiationId).toBe('generation');
         expect(payload.iceServers).toEqual([
             ...DEFAULT_ICE_SERVERS.slice(0, 6).map(server => server.urls),
-            'turn://openrelayproject:openrelayproject@openrelay.metered.ca:80',
-            'turn://openrelayproject:openrelayproject@openrelay.metered.ca:443',
-            'turns://openrelayproject:openrelayproject@openrelay.metered.ca:443?transport=tcp'
+            'turn://0fef8ed280773c0576776519:h7BwoMMBzRcnz2R5@br.relay.metered.ca:80',
+            'turn://0fef8ed280773c0576776519:h7BwoMMBzRcnz2R5@br.relay.metered.ca:443',
+            'turns://0fef8ed280773c0576776519:h7BwoMMBzRcnz2R5@br.relay.metered.ca:443?transport=tcp'
         ]);
     });
 

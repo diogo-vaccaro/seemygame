@@ -21,8 +21,13 @@ export function createStatsHud(peerId) {
  const button=document.createElement('button');button.type='button';button.className='stats-export';button.textContent='Exportar diagnóstico';button.disabled=true;hud.append(button);return hud;
 }
 export function renderStatsHud(peerId,isLocal,m,history=[]) {
- if(typeof document==='undefined')return;
- const values={rtt:m.rtt===null||m.rtt===undefined?'N/D':`${m.rtt} ms`,fps:m.fps===null||m.fps===undefined?'N/D':`${m.fps} FPS`,bitrate:m.bitrateText?m.bitrateText==='N/D'?'N/D':`${m.bitrateText} Mbps${isLocal?' (Envio)':''}`:'N/D',res:m.width&&m.height?`${m.width}x${m.height}`:'N/D',codec:m.codec?.replace(/^video\//i,'').toUpperCase()||'Aguardando negociação',presented:number(m.presentedFps,'FPS'),encode:number(m.encodeTimeMs),decode:number(m.decodeTimeMs),jitter:number(m.jitterMs),buffer:number(m.jitterBufferDelayMs),frametime:number(m.frametimeP95Ms),pause:number(m.maxPauseMs),loss:m.packetsLost==null?'N/D':`${m.packetsLost} perdidos`,quality:m.sampleError?'Sem amostra':m.qualityReason==='none'?'Normal':m.qualityReason?.toUpperCase()||'N/D',implementation:m.encoderImplementation||m.decoderImplementation||'N/D'};
+  const codecText = m.codec?.replace(/^video\//i,'').toUpperCase() || (
+    m.iceConnectionState === 'failed' ? 'Falha ICE/NAT' :
+    m.iceConnectionState === 'checking' ? 'Conectando (ICE)...' :
+    m.iceConnectionState === 'connected' ? 'Negociando codec...' :
+    'Aguardando negociação'
+  );
+  const values={rtt:m.rtt===null||m.rtt===undefined?'N/D':`${m.rtt} ms`,fps:m.fps===null||m.fps===undefined?'N/D':`${m.fps} FPS`,bitrate:m.bitrateText?m.bitrateText==='N/D'?'N/D':`${m.bitrateText} Mbps${isLocal?' (Envio)':''}`:'N/D',res:m.width&&m.height?`${m.width}x${m.height}`:'N/D',codec:codecText,presented:number(m.presentedFps,'FPS'),encode:number(m.encodeTimeMs),decode:number(m.decodeTimeMs),jitter:number(m.jitterMs),buffer:number(m.jitterBufferDelayMs),frametime:number(m.frametimeP95Ms),pause:number(m.maxPauseMs),loss:m.packetsLost==null?'N/D':`${m.packetsLost} perdidos`,quality:m.sampleError?'Sem amostra':m.qualityReason==='none'?'Normal':m.qualityReason?.toUpperCase()||'N/D',implementation:m.encoderImplementation||m.decoderImplementation||'N/D'};
  for(const [key,value] of Object.entries(values)){const elem=document.getElementById(`stat-${key}-${peerId}`);if(elem)elem.innerText=value;}
  const adaptationLabels={'maintain-resolution':'Resolução','maintain-framerate':'FPS',balanced:'Equilibrada'};
  for(const [key,value] of [['adaptation-requested',adaptationLabels[m.requestedDegradationPreference]||'N/D'],['adaptation-effective',adaptationLabels[m.effectiveDegradationPreference]||(m.requestedDegradationPreference?'Padrão do navegador':'N/D')]]){const elem=document.getElementById(`stat-${key}-${peerId}`);if(elem)elem.innerText=value;}

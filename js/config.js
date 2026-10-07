@@ -39,7 +39,7 @@ export const LATENCY_MODES = {
   STABLE: 'stable'
 };
 
-// Servidores STUN públicos confiáveis e fallback para relay TURN (OpenRelay)
+// Servidores STUN públicos confiáveis e fallback para relay TURN (Metered Brasil)
 export const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun.l.google.com:19302' },
   { urls: 'stun:stun1.l.google.com:19302' },
@@ -47,21 +47,21 @@ export const DEFAULT_ICE_SERVERS = [
   { urls: 'stun:stun3.l.google.com:19302' },
   { urls: 'stun:stun4.l.google.com:19302' },
   { urls: 'stun:stun.cloudflare.com:3478' },
-  // OpenRelay TURN para travessia de NATs restritivos / Firewalls corporativos
+  // Servidores TURN para travessia de NATs restritivos (CGNAT) e Firewalls
   {
-    urls: 'turn:openrelay.metered.ca:80',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:br.relay.metered.ca:80',
+    username: '0fef8ed280773c0576776519',
+    credential: 'h7BwoMMBzRcnz2R5'
   },
   {
-    urls: 'turn:openrelay.metered.ca:443',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turn:br.relay.metered.ca:443',
+    username: '0fef8ed280773c0576776519',
+    credential: 'h7BwoMMBzRcnz2R5'
   },
   {
-    urls: 'turns:openrelay.metered.ca:443?transport=tcp',
-    username: 'openrelayproject',
-    credential: 'openrelayproject'
+    urls: 'turns:br.relay.metered.ca:443?transport=tcp',
+    username: '0fef8ed280773c0576776519',
+    credential: 'h7BwoMMBzRcnz2R5'
   }
 ];
 
