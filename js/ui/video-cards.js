@@ -1,4 +1,6 @@
 import { createStatsHud } from '../stats/hud.js';
+import { pipController } from '../room/pip-controller.js';
+import { annotateManager } from '../room/annotate.js';
 const cardDisposals = new WeakMap();
 
 function disposeCard(card) {
@@ -341,20 +343,37 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
 
   // Botão PiP
   const pipBtn = document.createElement('button');
-  pipBtn.className = 'card-btn';
+  pipBtn.className = 'card-btn card-btn-pip';
   pipBtn.innerText = '⧉ PiP';
+  pipBtn.title = 'Destacar vídeo em janela flutuante Picture-in-Picture';
   pipBtn.onclick = async () => {
     try {
-      if (document.pictureInPictureElement) {
-        await document.exitPictureInPicture();
-      } else {
-        await video.requestPictureInPicture();
+      const ok = await pipController.toggleVideoPip(video, card);
+      if (!ok && !pipController.isSupported()) {
+        compatibilityContext.showToast('Picture-in-Picture não suportado neste navegador.', 'error');
       }
     } catch (err) {
-      compatibilityContext.showToast('Picture-in-Picture não suportado.', 'error');
+      compatibilityContext.showToast('Erro ao alternar Picture-in-Picture.', 'error');
     }
   };
   controls.appendChild(pipBtn);
+
+  // Botão Anotar (Telestrator)
+  const annotateBtn = document.createElement('button');
+  annotateBtn.className = 'card-btn card-btn-annotate';
+  annotateBtn.innerText = '✏️ Anotar';
+  annotateBtn.title = 'Desenhar e fazer anotações táticas sobre o stream';
+  annotateBtn.onclick = () => {
+    if (annotateManager.isActive && annotateManager.container === card) {
+      annotateManager.detach();
+      annotateBtn.classList.remove('card-btn-active');
+    } else {
+      annotateManager.attach(card, video);
+      annotateManager.createToolbar(card);
+      annotateBtn.classList.add('card-btn-active');
+    }
+  };
+  controls.appendChild(annotateBtn);
 
   // Botão de Clipar
   const clipCardBtn = document.createElement('button');

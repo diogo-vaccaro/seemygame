@@ -193,6 +193,100 @@
     </div>
   </div>
 
+  <!-- Modal de Enquetes ao Vivo da Sala -->
+  <div id="poll-modal" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="poll-modal-title">
+    <div class="modal-content" style="max-width: 460px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 id="poll-modal-title" style="margin: 0;">📊 Enquete ao Vivo</h3>
+        <button type="button" class="btn-secondary poll-modal-close" style="padding: 4px 8px; font-size: 12px;">✕</button>
+      </div>
+
+      <div id="poll-create-section">
+        <p style="color: var(--text-muted); font-size: 13px; line-height: 1.4; margin-bottom: 14px;">
+          Crie uma votação rápida para os participantes da sala. O resultado será publicado no chat ao finalizar.
+        </p>
+        <form id="poll-create-form">
+          <div style="margin-bottom: 12px;">
+            <label for="poll-question-input" style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Pergunta:</label>
+            <input type="text" id="poll-question-input" class="custom-id-field" placeholder="Ex: Qual o próximo jogo / mapa?" maxlength="120" required />
+          </div>
+          <div style="margin-bottom: 10px;">
+            <label style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Opções de Resposta:</label>
+            <input type="text" id="poll-opt-1" class="custom-id-field" placeholder="Opção 1" maxlength="60" required style="margin-bottom: 6px;" />
+            <input type="text" id="poll-opt-2" class="custom-id-field" placeholder="Opção 2" maxlength="60" required style="margin-bottom: 6px;" />
+            <input type="text" id="poll-opt-3" class="custom-id-field" placeholder="Opção 3 (opcional)" maxlength="60" style="margin-bottom: 6px;" />
+            <input type="text" id="poll-opt-4" class="custom-id-field" placeholder="Opção 4 (opcional)" maxlength="60" />
+          </div>
+          <div style="margin-bottom: 16px;">
+            <label for="poll-duration-select" style="display: block; font-size: 12px; color: var(--text-muted); margin-bottom: 4px;">Duração:</label>
+            <select id="poll-duration-select" class="custom-id-field">
+              <option value="30">⏱️ 30 segundos</option>
+              <option value="60" selected>⏱️ 1 minuto</option>
+              <option value="120">⏱️ 2 minutos</option>
+              <option value="300">⏱️ 5 minutos</option>
+              <option value="0">♾️ Sem limite de tempo</option>
+            </select>
+          </div>
+          <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 8px;">
+            <button type="button" id="poll-cancel-btn" class="btn-secondary">Cancelar</button>
+            <button type="submit" style="background: var(--accent-purple);">Iniciar Enquete</button>
+          </div>
+        </form>
+      </div>
+
+      <div id="poll-active-section" style="display: none;">
+        <div id="poll-active-card-container"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal de Gravação Multitrack Sincronizada -->
+  <div id="multitrack-modal" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="multitrack-modal-title">
+    <div class="modal-content" style="max-width: 480px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+        <h3 id="multitrack-modal-title" style="margin: 0;">⏺️ Gravação Multitrack em ZIP</h3>
+        <button type="button" class="btn-secondary multitrack-modal-close" style="padding: 4px 8px; font-size: 12px;">✕</button>
+      </div>
+      <p style="color: var(--text-muted); font-size: 13px; line-height: 1.4; margin-bottom: 14px;">
+        Grave simultaneamente a transmissão em faixas separadas sincronizadas (vídeo do jogo, seu microfone e áudio dos amigos). Ao parar, um arquivo <strong>.ZIP</strong> com as trilhas individuais e manifesto será gerado para edição no Premiere/DaVinci Resolve.
+      </p>
+
+      <div style="background: var(--surface-tint); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+        <div style="font-size: 12px; font-weight: 600; color: var(--text-muted); margin-bottom: 8px;">Faixas de Gravação:</div>
+        <div style="display: flex; flex-direction: column; gap: 6px; font-size: 13px;">
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="rec-track-master" checked disabled />
+            <span>🎮 <strong>Master Stream</strong> (Vídeo da Gameplay + Áudio do Jogo)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="rec-track-mic" checked />
+            <span>🎙️ <strong>Microfone Local</strong> (Sua voz isolada)</span>
+          </label>
+          <label style="display: flex; align-items: center; gap: 8px;">
+            <input type="checkbox" id="rec-track-participants" checked />
+            <span>🎧 <strong>Voz dos Participantes</strong> (Áudios dos amigos recebidos)</span>
+          </label>
+        </div>
+      </div>
+
+      <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px;">
+        <span id="multitrack-status-badge" class="status-badge status-badge-idle">Pronto para gravar</span>
+        <span id="multitrack-timer" style="font-weight: 700; color: var(--status-danger-text, #ff4757); display: none; font-size: 14px;">🔴 REC 00:00</span>
+      </div>
+
+      <div class="modal-actions" style="display: flex; justify-content: flex-end; gap: 8px;">
+        <button type="button" id="multitrack-cancel-btn" class="btn-secondary">Fechar</button>
+        <button type="button" id="multitrack-start-btn" style="background: var(--status-danger-text, #ff4757); color: white;">
+          <span>⏺️</span> Iniciar Gravação
+        </button>
+        <button type="button" id="multitrack-stop-btn" style="background: var(--accent-purple); color: white; display: none;">
+          <span>⏹️</span> Parar & Baixar ZIP
+        </button>
+      </div>
+    </div>
+  </div>
+
+
   <!-- Modal do Lobby Pré-Entrada (Green Room Estilo Google Meet) -->
   <!-- smg:partial templates/green-room-modal/default.html -->
 <div id="green-room-modal" class="modal-overlay" style="display: none;" role="dialog" aria-modal="true" aria-labelledby="green-room-title">
@@ -936,10 +1030,13 @@
           title="Ajustar nome da sala e PIN de acesso">
           <span>⚙️</span> Sala
         </button>
-
-
-
-
+        <button
+          id="streamer-mode-btn"
+          class="btn-secondary"
+          title="Modo Streamer (Ctrl+Shift+S) - Oculta senhas e dados confidenciais"
+          aria-label="Modo Streamer">
+          <span>🕶️</span> <span class="streamer-mode-label">Streamer</span>
+        </button>
       </div>
     </div>
   </header>
@@ -1038,6 +1135,9 @@
         </button>
         <button id="dock-whiteboard-btn" class="dock-btn" title="Abrir Lousa Colaborativa">
           <span>🎨</span> <span class="dock-label">Lousa</span>
+        </button>
+        <button id="dock-room-tools-btn" class="dock-btn" title="Ferramentas da Sala (Anotar, Enquetes, Gravação Multitrack)">
+          <span>🛠️</span> <span class="dock-label">Ferramentas</span>
         </button>
         <button id="dock-leave-btn" class="dock-btn dock-btn-danger" title="Sair da Sala">
           <span>🚪</span> <span class="dock-label">Sair</span>

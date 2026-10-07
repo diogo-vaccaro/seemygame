@@ -1,5 +1,6 @@
 import { SOUNDBOARD_PRESETS } from ".././soundboard.js";
 import { EMOJI_REACTION_PRESETS } from './shared.js';
+import { createParticipantVolumePopover } from '../ui/participant-controls.js';
 /** DiscordUIController: stage. State and lifetime remain owned by the composed engine. */
 export const withDiscordUIControllerStage = Base => class extends Base {
 bindRoomDockEvents() {
@@ -259,6 +260,15 @@ updateRoomPresence(members) {
           icons.appendChild(dSpan);
         }
 
+        if (this.voiceManager && m.peerId && m.peerId !== this.roomManager?.myPeerId) {
+          const volPopover = createParticipantVolumePopover({
+            peerId: m.peerId,
+            name: m.name || 'Amigo',
+            voiceManager: this.voiceManager
+          });
+          if (volPopover) icons.appendChild(volPopover);
+        }
+
         item.appendChild(avatarWrapper);
         item.appendChild(info);
         item.appendChild(icons);
@@ -300,6 +310,15 @@ updateRoomPresence(members) {
           live.style.marginTop = '6px';
           live.textContent = 'AO VIVO';
           tile.appendChild(live);
+        }
+
+        if (this.voiceManager && m.peerId && m.peerId !== this.roomManager?.myPeerId) {
+          const volPopover = createParticipantVolumePopover({
+            peerId: m.peerId,
+            name: m.name || 'Amigo',
+            voiceManager: this.voiceManager
+          });
+          if (volPopover) tile.appendChild(volPopover);
         }
 
         voiceStageGrid.appendChild(tile);

@@ -63,6 +63,8 @@ import { bindRoomIdentity } from './room-identity.js';
 import { bindRoomSettings } from './room-settings.js';
 import { bindRoomVoiceState } from './room-voice-state.js';
 import { createCoordinatorReconnect } from './coordinator-reconnect.js';
+import { streamerMode } from '../room/streamer-mode.js';
+import { roomToolsController } from '../room/room-tools.js';
 import { registerSessionFeatures } from '../plugins/session-composition.js';
 import { createCoopController } from '../coop/controller.js';
 
@@ -1075,6 +1077,31 @@ async function initRoomApp(options = {}) {
   // Configura modais de calibração de controle e configurações
   setupTuningModal(session);
   setupGamepadTesterModal();
+
+  // Inicializa Modo Streamer e Ferramentas da Sala
+  streamerMode.init({
+    toggleBtn: document.getElementById('streamer-mode-btn'),
+    roomHeaderBadge: document.getElementById('room-header-badge'),
+    shareRoomCodeDisplay: document.getElementById('share-room-code-display')
+  });
+
+  roomToolsController.bindSession({
+    session,
+    broadcast: (data, excludePeerId) => roomState.roomManager?.broadcast(data, excludePeerId),
+    chatManager,
+    getPeerId: () => roomState.peer?.id || 'room-member',
+    getDisplayName: () => roomState.userName,
+    getActiveVideoStream: () => roomState.localStream,
+    getVoiceStreams: () => ({
+      localMic: voiceManager.localStream,
+      participants: null
+    })
+  });
+  roomToolsController.bindDOM();
+  session.registerCleanup(() => {
+    roomToolsController.dispose();
+    streamerMode.destroy();
+  });
 
   const startRoomFlow = () => {
     initGreenRoomLobby(async () => {
