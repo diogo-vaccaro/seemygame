@@ -23,6 +23,7 @@ export function collectPeerMetrics(stats,{peerId,isLocal=false,previous={},now=p
  const track=reports.find(r=>r.type==='track'&&r.kind==='video');
  const bitrateMbps=bytesValid&&elapsed>0?byteDelta*8/elapsed/1e6:null;
  const native = reports.find(r => r.type === 'native-pipeline');
+ const connection = reports.find(r => r.type === 'native-connection');
  const producedFrames = delta(native, previous.nativeCounters, 'framesProduced');
  const producedBytes = delta(native, previous.nativeCounters, 'bytesProduced');
  const producedFps = producedFrames !== null && elapsed > 0 ? producedFrames / elapsed : null;
@@ -30,6 +31,7 @@ export function collectPeerMetrics(stats,{peerId,isLocal=false,previous={},now=p
  const rawFps=primaryFrames!==null&&elapsed>0?primaryFrames/elapsed:finite(video?.framesPerSecond) ?? producedFps;
  return {
   peerId,timestamp:now,direction:isLocal?'outbound':'inbound',counters,nativeCounters:native,
+  iceConnectionState:connection?.iceConnectionState ?? null,connectionState:connection?.connectionState ?? null,
   producedFps, producedBitrateMbps: producedBytes !== null && elapsed > 0 ? producedBytes * 8 / elapsed / 1e6 : null,
   producerMaxPauseMs: native?.producerMaxPauseMs ?? null, producerFrameAgeMs: native?.producerFrameAgeMs ?? null, fpsStage: native ? 'native-rtp' : isLocal ? 'encoded' : 'decoded',
   fps:rawFps===null?null:Math.round(rawFps),measuredFps:rawFps,bitrateMbps,bitrateText:bitrateMbps===null?'N/D':bitrateMbps.toFixed(2),

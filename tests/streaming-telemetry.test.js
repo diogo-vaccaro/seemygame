@@ -15,6 +15,27 @@ const sample=(report,previous={},now=1000,extra=[])=>collectPeerMetrics([report,
 const codec=name=>({mimeType:'video/'+name,clockRate:90000});
 afterEach(()=>{vi.useRealTimers();document.body.innerHTML='';});
 describe('Production telemetry accuracy',()=>{
+ it('shows browser ICE progress and failure in the HUD and exported diagnosis without RTP',async()=>{
+  vi.useFakeTimers();
+  const card=document.createElement('div');card.id='card-p';card.append(createStatsHud('p'));document.body.append(card);
+  const pc={iceConnectionState:'checking',connectionState:'connecting',getStats:async()=>[]},scope=createStatsMonitorScope();
+  scope.startStatsMonitor('p',pc);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(document.getElementById('stat-codec-p').innerText).toBe('Conectando (ICE)...');
+  pc.iceConnectionState='failed';pc.connectionState='failed';
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(document.getElementById('stat-codec-p').innerText).toBe('Falha ICE/NAT');
+  expect(scope.exportDiagnostic().streams[0].samples.at(-1)).toMatchObject({iceConnectionState:'failed',connectionState:'failed'});
+  scope.dispose();
+ });
+ it('shows native ICE state when the sender has no browser peer connection',async()=>{
+  vi.useFakeTimers();
+  const scope=createStatsMonitorScope();
+  scope.startStatsMonitor('native-send-p',{getStats:async()=>[{id:'native-connection',type:'native-connection',iceConnectionState:'checking',connectionState:'connecting'}]},true);
+  await vi.advanceTimersByTimeAsync(1000);
+  expect(scope.getLastMetrics('native-send-p')).toMatchObject({iceConnectionState:'checking',connectionState:'connecting',codec:null});
+  scope.dispose();
+ });
  it('calculates interval decode/jitter/loss/bitrate including an initial zero counter',()=>{
   const a=sample(rtp());
   const b=sample(rtp({bytesReceived:1000000,packetsLost:2,packetsReceived:98,framesDecoded:50,totalDecodeTime:.1,jitterBufferDelay:1,jitterBufferEmittedCount:50}),a,2000);

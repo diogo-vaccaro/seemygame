@@ -70,7 +70,13 @@ pub(crate) fn collect(webrtc: &gst::Element) -> Result<Vec<serde_json::Value>, S
     webrtc.emit_by_name::<()>("get-stats", &[&None::<gst::Pad>, &promise]);
     wait_promise(&promise, "telemetria WebRTC")?;
     let reply = promise.get_reply().ok_or("Telemetria nativa sem resposta")?;
-    Ok(reply.iter().filter_map(|(_, value)| value.get::<gst::Structure>().ok()).map(|s| normalize(&s)).collect())
+    let mut reports: Vec<serde_json::Value> = reply.iter().filter_map(|(_, value)| value.get::<gst::Structure>().ok()).map(|s| normalize(&s)).collect();
+    reports.push(serde_json::json!({
+        "id": "native-connection", "type": "native-connection",
+        "iceConnectionState": format!("{:?}", webrtc.property::<gst_webrtc::WebRTCICEConnectionState>("ice-connection-state")).to_ascii_lowercase(),
+        "connectionState": format!("{:?}", webrtc.property::<gst_webrtc::WebRTCPeerConnectionState>("connection-state")).to_ascii_lowercase(),
+    }));
+    Ok(reports)
 }
 
 #[cfg(test)]

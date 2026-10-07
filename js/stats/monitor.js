@@ -44,6 +44,8 @@ export function createStatsMonitorScope({historyLimit=120}={}) {
     const video=options.video||(!isLocal&&card?.querySelector('video'));
     if(video&&e.video!==video){e.presentation?.dispose();e.video=video;e.presentation=observePresentation(video);}
     const sample={...collectPeerMetrics(reports,{peerId:id,isLocal,previous:metrics.get(id),now:performance.now()}),...e.presentation?.sample(),...options.context?.()};
+    sample.iceConnectionState=pc.iceConnectionState ?? sample.iceConnectionState;
+    sample.connectionState=pc.connectionState ?? sample.connectionState;
     if(isLocal) {
      const sender=pc.getSenders?.().find(sender=>sender.track?.kind==='video');
      Object.assign(sample,sender?getSenderParameterStatus(sender):null);

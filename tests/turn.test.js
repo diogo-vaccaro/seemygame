@@ -1,7 +1,8 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import turnHandler from '../api/turn.js';
 
 describe('Serverless: api/turn.js', () => {
+  afterEach(() => vi.unstubAllEnvs());
   let mockReq;
   let mockRes;
   let statusMock;
@@ -78,6 +79,30 @@ describe('Serverless: api/turn.js', () => {
 
     expect(statusMock).toHaveBeenCalledWith(403);
     expect(jsonMock).toHaveBeenCalledWith({ error: 'Origin not allowed' });
+  });
+  it('accepts production browser GETs without Origin from the same allowed site', async () => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('METERED_DOMAIN', ''); vi.stubEnv('METERED_API_KEY', '');
+    vi.stubEnv('TURN_ALLOWED_ORIGINS', 'https://seemygame.vercel.app');
+    mockReq.headers = { host: 'seemygame.vercel.app', referer: 'https://seemygame.vercel.app/room.html', 'sec-fetch-site': 'same-origin' };
+    await turnHandler(mockReq, mockRes);
+    expect(statusMock).toHaveBeenCalledWith(200);
+    expect(setHeaderMock).toHaveBeenCalledWith('Access-Control-Allow-Origin', 'https://seemygame.vercel.app');
+    expect(jsonMock).toHaveBeenCalledWith(expect.objectContaining({ iceServers: expect.any(Array) }));
+  });
+  it.each([
+    {},
+    { host: 'seemygame.vercel.app', referer: 'https://seemygame.vercel.app/room.html', 'sec-fetch-site': 'cross-site' },
+    { host: 'seemygame.vercel.app', referer: 'https://evil.example/', 'sec-fetch-site': 'same-origin' },
+    { host: 'evil.example', referer: 'https://evil.example/', 'sec-fetch-site': 'same-origin' },
+    { host: 'seemygame.vercel.app', referer: 'invalid', 'sec-fetch-site': 'same-origin' },
+    { host: 'seemygame.vercel.app', referer: 'https://seemygame.vercel.app/', 'sec-fetch-site': 'same-origin', origin: 'https://evil.example' }
+  ])('rejects untrusted origin-less production requests (%j)', async headers => {
+    vi.stubEnv('NODE_ENV', 'production');
+    vi.stubEnv('TURN_ALLOWED_ORIGINS', 'https://seemygame.vercel.app');
+    mockReq.headers = headers;
+    await turnHandler(mockReq, mockRes);
+    expect(statusMock).toHaveBeenCalledWith(403);
   });
 });
 

@@ -23,6 +23,35 @@ it('gates direct stream negotiation by admission and capture identity', async ()
   expect(plugin.broadcastTo(conn)).toBe(true); expect(conn.send.mock.calls[0][0].senderPeerId).toBe('host');
   await session.disposeAsync();
 });
+it('forwards ICE received before the offer and while native creation is pending', async () => {
+  const { session, plugin, conn } = fixture();
+  plugin.broadcastTo(conn);
+  const identity = plugin.outgoing.get(conn.peer);
+  const ice = { type: 'DIRECT_STREAM_ICE_CANDIDATE', ...identity, target: 'sender', candidate: 'early-ice', mlineIndex: 0 };
+  session.dispatcher.dispatch(ice, conn);
+  expect(ipc.ice).toHaveBeenCalledWith('capture-a', 'guest', 0, 'early-ice', identity.negotiationId);
+  expect(ipc.create).not.toHaveBeenCalled();
+  let finish;
+  ipc.create.mockImplementationOnce(() => new Promise(resolve => { finish = resolve; }));
+  const pending = plugin.answer({ ...identity, sdp: 'offer' }, conn);
+  session.dispatcher.dispatch({ ...ice, candidate: 'during-create' }, conn);
+  expect(ipc.ice).toHaveBeenLastCalledWith('capture-a', 'guest', 0, 'during-create', identity.negotiationId);
+  session.dispatcher.dispatch({ ...ice, negotiationId: 'obsolete' }, conn);
+  session.dispatcher.dispatch(ice, { ...conn, peer: 'intruder' });
+  expect(ipc.ice).toHaveBeenCalledTimes(2);
+  finish({ sdp: 'answer' }); await pending;
+  await session.disposeAsync();
+});
+it.each(['stream:stopped', 'streamer:viewerDisconnected'])('cancels queued ICE when %s occurs before the offer', async event => {
+  const { session, plugin, conn } = fixture();
+  plugin.broadcastTo(conn);
+  const identity = plugin.outgoing.get(conn.peer);
+  session.eventBus.emit(event, event === 'stream:stopped' ? { sourceId: 'local-me' } : { peerId: 'guest' });
+  expect(ipc.close).toHaveBeenCalledWith('capture-a', 'guest', identity.negotiationId);
+  session.dispatcher.dispatch({ type: 'DIRECT_STREAM_ICE_CANDIDATE', ...identity, target: 'sender', candidate: 'delayed' }, conn);
+  expect(ipc.ice).not.toHaveBeenCalled();
+  await session.disposeAsync();
+});
 it('closes a native peer whose negotiation completes after disposal without sending an answer', async () => {
   const { session, plugin, conn } = fixture(); let finish;
   plugin.broadcastTo(conn);

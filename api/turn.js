@@ -21,6 +21,19 @@ function getAllowedOrigins() {
   return new Set(values.length > 0 ? values : DEFAULT_ALLOWED_ORIGINS);
 }
 
+function getRequestOrigin(req) {
+  const origin = getHeader(req, 'origin');
+  if (origin) return origin;
+  // Browsers omit Origin on same-origin GETs. Accept only their same-origin
+  // fetch metadata and a referrer matching the actual request host; the
+  // existing allowlist still validates the resulting origin below.
+  if (getHeader(req, 'sec-fetch-site') !== 'same-origin') return '';
+  try {
+    const referrer = new URL(getHeader(req, 'referer'));
+    return referrer.host === getHeader(req, 'host') ? referrer.origin : '';
+  } catch (_) { return ''; }
+}
+
 function isRateLimited(req) {
   const forwardedFor = getHeader(req, 'x-forwarded-for').split(',')[0].trim();
   const key = forwardedFor || getHeader(req, 'x-real-ip') || 'anonymous';
@@ -62,17 +75,16 @@ function hasValidAccessToken(req) {
  */
 
 export default async function handler(req, res) {
-  const origin = getHeader(req, 'origin');
+  const origin = getRequestOrigin(req);
   const allowedOrigins = getAllowedOrigins();
   const production = process.env.NODE_ENV === 'production';
   if ((origin && !allowedOrigins.has(origin)) || (!origin && production)) {
     return res.status(403).json({ error: 'Origin not allowed' });
   }
 
-  // Keep CORS scoped to the configured frontend. Missing Origin is allowed only
-  // outside production so local CLI/serverless tests remain usable.
+  // Keep CORS scoped to the configured frontend, including same-origin GETs.
   res.setHeader('Access-Control-Allow-Origin', origin || '*');
-  res.setHeader('Vary', 'Origin');
+  res.setHeader('Vary', 'Origin, Referer, Sec-Fetch-Site');
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 

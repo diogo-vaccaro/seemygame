@@ -36,7 +36,10 @@ export class NativeMediaPlugin extends BasePlugin {
         if (typeof data.candidate !== 'string' || data.candidate.length > 8192) return;
         const sender = this.outgoing.get(conn.peer);
         if (data.target === 'sender') {
-          if (this.matches(sender, data) && this.senders.get(conn.peer) === sender.sessionId) {
+          // Trickle ICE can arrive during setLocalDescription, before the offer.
+          // Rust queues these candidates until the native bridge is ready.
+          if (this.matches(sender, data) && this.getProvider?.()?.session?.sessionId === sender.sessionId &&
+              (this.negotiating.has(conn.peer) || this.senders.get(conn.peer) === sender.sessionId)) {
             return addNativeViewerIceCandidate(sender.sessionId, conn.peer, Number(data.mlineIndex || 0), data.candidate, sender.negotiationId);
           }
           return;
@@ -62,8 +65,8 @@ export class NativeMediaPlugin extends BasePlugin {
         if (!id) return;
         this.session.services?.statsScope?.stopStatsMonitor(`native-send-${id}`);
         this.closeReceiver(id);
-        const captureId = this.senders.get(id);
         const sender = this.outgoing.get(id);
+        const captureId = sender?.sessionId || this.senders.get(id);
         this.senders.delete(id); this.outgoing.delete(id); this.negotiating.delete(id); this.connections?.delete(id);
         if (captureId) await closeNativeViewerPeer(captureId, id, sender?.negotiationId);
       }));
@@ -164,7 +167,7 @@ export class NativeMediaPlugin extends BasePlugin {
       const sender = this.outgoing.get(conn.peer);
       if (sender) sendSessionMessage(this.session, conn, { type: 'DIRECT_STREAM_STOP', ...sender });
     }
-    const pending = [...this.senders].map(([id, sessionId]) => closeNativeViewerPeer(sessionId, id, this.outgoing.get(id)?.negotiationId));
+    const pending = [...this.outgoing].map(([id, sender]) => closeNativeViewerPeer(sender.sessionId, id, sender.negotiationId));
     this.senders.clear(); this.outgoing.clear(); this.negotiating.clear(); this.connections?.clear();
     return Promise.allSettled(pending);
   }
