@@ -52,7 +52,7 @@ export function createRoomKey() {
  * @param {string} [options.basePath=null]
  * @returns {string}
  */
-export function buildRoomUrl({ roomId, roomKey = null, roomPin = null, basePath = null } = {}) {
+export function buildRoomUrl({ roomId, roomKey = null, roomPin = null, basePath = null, turnToken = null } = {}) {
   const cleanId = sanitizeRoomId(roomId);
   const effectiveBase = basePath !== null ? basePath : getSanitizedPath();
   const origin = (typeof window !== 'undefined' && window.location?.origin && window.location.origin !== 'null')
@@ -60,7 +60,14 @@ export function buildRoomUrl({ roomId, roomKey = null, roomPin = null, basePath 
     : '';
   const keyParam = roomKey ? `&key=${encodeURIComponent(roomKey)}` : '';
   const pinParam = roomPin ? `&pin=${encodeURIComponent(roomPin)}` : '';
-  return `${origin}${effectiveBase}room.html#room=${encodeURIComponent(cleanId)}${keyParam}${pinParam}`;
+  let token = turnToken;
+  if (!token && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+    try { token = localStorage.getItem('seemygame_turn_access_token'); } catch (_) {}
+  }
+  const tokenParam = (token && typeof token === 'string' && token.length <= 512)
+    ? `&turn_token=${encodeURIComponent(token)}`
+    : '';
+  return `${origin}${effectiveBase}room.html#room=${encodeURIComponent(cleanId)}${keyParam}${pinParam}${tokenParam}`;
 }
 
 export { parseRoomIdentifier };

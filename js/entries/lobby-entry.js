@@ -132,7 +132,7 @@ export function initLobbyApp(options = {}) {
     session.addEventListener(createRandomBtn, 'click', () => {
       const randomCode = generateFriendlyRoomCode();
       if (roomIdInput) roomIdInput.value = randomCode;
-      handleJoinRoom(randomCode, createRoomKey());
+      handleJoinRoom(randomCode);
     });
   }
 

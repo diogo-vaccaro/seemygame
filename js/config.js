@@ -89,10 +89,26 @@ function getRuntimeTurnAccessToken() {
   if (typeof configured === 'string' && configured.length <= 512) return configured;
   try {
     const stored = localStorage.getItem('seemygame_turn_access_token');
-    return typeof stored === 'string' && stored.length <= 512 ? stored : '';
-  } catch (error) {
-    return '';
-  }
+    if (typeof stored === 'string' && stored.length <= 512) return stored;
+  } catch (_) {}
+  try {
+    const sessionStored = sessionStorage.getItem('seemygame_turn_access_token');
+    if (typeof sessionStored === 'string' && sessionStored.length <= 512) return sessionStored;
+  } catch (_) {}
+  try {
+    if (window.location) {
+      const searchParams = new URLSearchParams(window.location.search || '');
+      const hash = (window.location.hash || '').replace(/^#/, '');
+      const hashParams = new URLSearchParams(hash);
+      const urlToken = searchParams.get('turn_token') || searchParams.get('turnToken') ||
+                       hashParams.get('turn_token') || hashParams.get('turnToken');
+      if (urlToken && urlToken.length <= 512) {
+        try { localStorage.setItem('seemygame_turn_access_token', urlToken); } catch (_) {}
+        return urlToken;
+      }
+    }
+  } catch (_) {}
+  return '';
 }
 
 function getTurnEndpoint() {

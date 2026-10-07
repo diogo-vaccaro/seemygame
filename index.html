@@ -368,9 +368,8 @@
     function launchInstantRoom() {
       const style = Math.random() > 0.4 ? 'gamer' : 'meet';
       const friendlyCode = generateFriendlyRoomCode(style);
-      const key = createRoomKey();
       const basePath = getSanitizedPath();
-      window.location.href = `${window.location.origin}${basePath}room.html#room=${encodeURIComponent(friendlyCode)}&key=${encodeURIComponent(key)}`;
+      window.location.href = `${window.location.origin}${basePath}room.html#room=${encodeURIComponent(friendlyCode)}`;
     }
 
     const heroCreateBtn = document.getElementById('hero-create-btn');

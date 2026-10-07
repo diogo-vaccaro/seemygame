@@ -124,6 +124,34 @@ export default async function handler(req, res) {
     }
   }
 
+  // 1.1 Se servidores TURN estáticos forem fornecidos diretamente em JSON:
+  if (process.env.TURN_SERVERS_JSON) {
+    try {
+      const customServers = JSON.parse(process.env.TURN_SERVERS_JSON);
+      if (Array.isArray(customServers) && customServers.length > 0) {
+        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+        return res.status(200).json({ iceServers: customServers, source: 'custom-static-credentials' });
+      }
+    } catch (_) {}
+  }
+
+  // 1.2 Se credenciais estáticas do TURN (ex: Metered Brasil / Coturn) estiverem configuradas:
+  const turnUsername = process.env.TURN_USERNAME;
+  const turnPassword = process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL;
+  const turnHost = process.env.TURN_HOST || process.env.TURN_DOMAIN || 'br.relay.metered.ca';
+
+  if (turnUsername && turnPassword) {
+    const iceServers = [
+      { urls: 'stun:stun.relay.metered.ca:80' },
+      { urls: `turn:${turnHost}:80`, username: turnUsername, credential: turnPassword },
+      { urls: `turn:${turnHost}:80?transport=tcp`, username: turnUsername, credential: turnPassword },
+      { urls: `turn:${turnHost}:443`, username: turnUsername, credential: turnPassword },
+      { urls: `turns:${turnHost}:443?transport=tcp`, username: turnUsername, credential: turnPassword }
+    ];
+    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
+    return res.status(200).json({ iceServers, source: 'metered-static-credentials' });
+  }
+
   // 2. Fallback de alta disponibilidade com STUNs públicos e TURN OpenRelay (50 GB/mês para testes e desenvolvimento)
   if (production) {
     // Never expose the public OpenRelay credentials as a production fallback.

@@ -227,6 +227,9 @@ async function setupRoomSession(peerId, session = roomState.session) {
   });
 
   rm.on('membersUpdated', () => {
+    if (!rm.isMaster && rm.isPeerAuthorized(rm.masterPeerId)) {
+      roomState.identityUI?.update('ready');
+    }
     if (!roomState.localStream || !roomState.peer) return;
     for (const [memberId, connection] of rm.meshConnections) {
       sendRoomStream(memberId, connection, rm, session);
@@ -276,8 +279,17 @@ async function setupRoomSession(peerId, session = roomState.session) {
     const promptModal = document.getElementById('pin-prompt-modal');
     if (promptModal) promptModal.style.display = 'none';
     showToast('Entrada na sala autorizada!', 'success');
+    roomState.identityUI?.update('ready');
     (session?.eventBus || globalBus).emit('room:pinAccepted');
   });
+
+  const onJoinRejected = ({ error }) => {
+    showToast(error || 'Não foi possível entrar na sala.', 'error');
+    roomState.identityUI?.update('error');
+    (session?.eventBus || globalBus).emit('room:joinRejected', { error });
+  };
+  rm.on('joinRejected', onJoinRejected);
+  session?.registerCleanup(() => rm.off('joinRejected', onJoinRejected));
 
   rm.on('memberLeft', (member) => {
     if (member && member.peerId) {
@@ -329,7 +341,24 @@ async function setupRoomSession(peerId, session = roomState.session) {
       metadata: { type: 'ROOM_JOIN', roomId: rm.roomId }
     });
     roomState.coordinatorConn = conn;
-    attachRoomDataConnection(conn, rm, session, { requestAdmission: true, pin });
+    let initialOpenTimer = setTimeout(() => {
+      if (!session?.isDisposed && rm.isInRoom && !rm.isMaster && (!conn?.open || !rm.authenticatedPeers.has(rm.masterPeerId))) {
+        console.warn(`[Room] Conexão com coordenador (${rm.masterPeerId}) não abriu em 6s. Agendando reconexão...`);
+        try { conn?.close(); } catch (_) {}
+        scheduleCoordinatorReconnect();
+      }
+    }, 6000);
+    const clearInitialTimer = () => { if (initialOpenTimer) { clearTimeout(initialOpenTimer); initialOpenTimer = null; } };
+    session?.registerCleanup(clearInitialTimer);
+
+    attachRoomDataConnection(conn, rm, session, {
+      requestAdmission: true,
+      pin,
+      onOpen: clearInitialTimer,
+      onClose: clearInitialTimer,
+      onError: clearInitialTimer
+    });
+
     return conn;
   };
   roomState.requestRoomJoin = joinCoordinator;
@@ -415,18 +444,22 @@ async function setupRoomSession(peerId, session = roomState.session) {
     roomState.peer.on('call', (call) => handleRoomMediaCall(call, rm, session));
     if (isMaster) {
       connectMeshMembers();
+      roomState.identityUI?.update('ready');
+      showToast(`Você entrou na sala #${roomId}!`, 'success');
     } else {
+      roomState.identityUI?.update('connecting');
       joinCoordinator(roomPin);
+      showToast(`Conectando à sala #${roomId}...`, 'info');
     }
-    showToast(`Você entrou na sala #${roomId}!`, 'success');
     (session?.eventBus || globalBus).emit('room:joined', { roomId, peerId });
   }
 }
 
-function attachRoomDataConnection(conn, rm, session, { requestAdmission = false, authenticateMember = false, pin = null } = {}) {
+function attachRoomDataConnection(conn, rm, session, { requestAdmission = false, authenticateMember = false, pin = null, onOpen = null, onClose = null, onError = null } = {}) {
   if (!conn?.peer || !rm.registerConnection(conn.peer, conn)) { try { conn?.close(); } catch (_) {} return false; }
   const isCurrent = () => !session?.isDisposed && (rm.meshConnections.get(conn.peer) === conn || rm.pendingConnections.get(conn.peer) === conn);
   conn.on('open', () => {
+    onOpen?.();
     if (!isCurrent()) return;
     if (requestAdmission) {
       sendSessionMessage(roomState.session, conn, {
@@ -461,6 +494,7 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
     }
   });
   conn.on('close', () => {
+    onClose?.();
     if (!isCurrent()) return;
     const isMasterConn = roomState.coordinatorConn === conn;
     if (isMasterConn) {
@@ -471,7 +505,13 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
     }
     rm.removeMember(conn.peer);
   });
-  conn.on('error', (error) => console.warn(`[Room] Conexão com ${conn.peer} falhou:`, error));
+  conn.on('error', (error) => {
+    onError?.(error);
+    console.warn(`[Room] Conexão com ${conn.peer} falhou:`, error);
+    if (conn === roomState.coordinatorConn && !session?.isDisposed && rm.isInRoom && !rm.isMaster) {
+      roomState.scheduleCoordinatorReconnect?.();
+    }
+  });
   return true;
 }
 

@@ -45,6 +45,32 @@ describe('Serverless: api/turn.js', () => {
     process.env = originalEnv;
   });
 
+  it('deve retornar servidores estáticos quando TURN_USERNAME e TURN_PASSWORD estão configurados', async () => {
+    const originalEnv = process.env;
+    process.env = { ...originalEnv };
+    delete process.env.METERED_DOMAIN;
+    delete process.env.METERED_API_KEY;
+    process.env.TURN_USERNAME = '0fef8ed280773c0576776519';
+    process.env.TURN_PASSWORD = 'h7BwoMMBzRcnz2R5';
+
+    await turnHandler(mockReq, mockRes);
+
+    expect(statusMock).toHaveBeenCalledWith(200);
+    expect(jsonMock).toHaveBeenCalledWith(expect.objectContaining({
+      source: 'metered-static-credentials',
+      iceServers: expect.arrayContaining([
+        expect.objectContaining({ urls: 'stun:stun.relay.metered.ca:80' }),
+        expect.objectContaining({
+          urls: 'turn:br.relay.metered.ca:80',
+          username: '0fef8ed280773c0576776519',
+          credential: 'h7BwoMMBzRcnz2R5'
+        })
+      ])
+    }));
+
+    process.env = originalEnv;
+  });
+
   it('deve rejeitar origens externas não configuradas', async () => {
     mockReq.headers = { origin: 'https://evilseemygame.com' };
 
@@ -54,3 +80,4 @@ describe('Serverless: api/turn.js', () => {
     expect(jsonMock).toHaveBeenCalledWith({ error: 'Origin not allowed' });
   });
 });
+

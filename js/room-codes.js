@@ -98,12 +98,20 @@ export function parseRoomIdentifier(raw) {
     const hashParams = new URLSearchParams(hashPart);
     candidate = hashParams.get('room') || hashPart.split('room=')[1].split('&')[0];
     roomKey = hashParams.get('key') || null;
+    const turnToken = hashParams.get('turn_token') || hashParams.get('turnToken') || null;
+    if (turnToken && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+      try { localStorage.setItem('seemygame_turn_access_token', turnToken); } catch (_) {}
+    }
   } else if (candidate.includes('?room=') || candidate.includes('&room=')) {
     try {
       const queryPart = candidate.includes('?') ? candidate.slice(candidate.indexOf('?') + 1) : candidate;
       const urlParams = new URLSearchParams(queryPart);
       candidate = urlParams.get('room') || candidate;
       roomKey = urlParams.get('key') || null;
+      const turnToken = urlParams.get('turn_token') || urlParams.get('turnToken') || null;
+      if (turnToken && typeof window !== 'undefined' && typeof localStorage !== 'undefined') {
+        try { localStorage.setItem('seemygame_turn_access_token', turnToken); } catch (_) {}
+      }
     } catch (e) {}
   } else if (candidate.includes('#watch=')) {
     const watchPart = candidate.slice(candidate.indexOf('#') + 1);
