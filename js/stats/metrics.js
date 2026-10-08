@@ -19,7 +19,17 @@ export function collectPeerMetrics(stats,{peerId,isLocal=false,previous={},now=p
  const prior=video && previous.counters?.[`${video.id||video.type}:${video.ssrc??''}`];
  const codec=byId.get(video?.codecId), transport=byId.get(video?.transportId)||reports.find(r=>r.type==='transport'&&r.selectedCandidatePairId);
  const pair=byId.get(transport?.selectedCandidatePairId)||reports.find(r=>r.type==='candidate-pair'&&(r.selected||r.nominated))||reports.find(r=>r.type==='candidate-pair'&&r.state==='succeeded');
+ const localCandidate=pair?.localCandidateId?byId.get(pair.localCandidateId):reports.find(r=>r.type==='local-candidate'&&r.id===pair?.localCandidateId);
+ const remoteCandidate=pair?.remoteCandidateId?byId.get(pair.remoteCandidateId):reports.find(r=>r.type==='remote-candidate'&&r.id===pair?.remoteCandidateId);
+ const localCandidateType=localCandidate?.candidateType||null, remoteCandidateType=remoteCandidate?.candidateType||null;
+ const isRelay=localCandidateType==='relay'||remoteCandidateType==='relay';
+ const isPrivateIp=ip=>typeof ip==='string'&&(/^(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[0-1])\.|169\.254\.|127\.|fc00:|fe80:)/i.test(ip.trim())||/\.local$/i.test(ip.trim())||ip.trim()==='::1');
+ const remoteIp=remoteCandidate?.address||remoteCandidate?.ip, localIp=localCandidate?.address||localCandidate?.ip;
+ const isHostToHost=localCandidateType==='host'&&remoteCandidateType==='host';
  const remote=reports.find(r=>r.type==='remote-inbound-rtp'&&video&&(r.localId===video.id||r.id===video.remoteId))||reports.find(r=>r.type==='remote-inbound-rtp'&&(r.kind||r.mediaType)==='video');
+ const calculatedRtt=finite(isLocal?remote?.roundTripTime:null)!==null?Math.round(remote.roundTripTime*1000):finite(pair?.currentRoundTripTime)!==null?Math.round(pair.currentRoundTripTime*1000):null;
+ const hasPrivateIps=isPrivateIp(remoteIp)&&isPrivateIp(localIp);
+ const isLan=!isRelay&&Boolean(isHostToHost&&hasPrivateIps&&calculatedRtt!==null&&calculatedRtt<=25);
  const track=reports.find(r=>r.type==='track'&&r.kind==='video');
  const bitrateMbps=bytesValid&&elapsed>0?byteDelta*8/elapsed/1e6:null;
  const native = reports.find(r => r.type === 'native-pipeline');
@@ -39,7 +49,7 @@ export function collectPeerMetrics(stats,{peerId,isLocal=false,previous={},now=p
   codec:codec?.mimeType||null,codecParameters:codec?.sdpFmtpLine||null,
   encoderImplementation:video?.encoderImplementation||null,decoderImplementation:video?.decoderImplementation||null,
   powerEfficientEncoder:video?.powerEfficientEncoder??null,powerEfficientDecoder:video?.powerEfficientDecoder??null,
-  rtt:finite(isLocal?remote?.roundTripTime:null)!==null?Math.round(remote.roundTripTime*1000):finite(pair?.currentRoundTripTime)!==null?Math.round(pair.currentRoundTripTime*1000):null,
+  rtt:calculatedRtt,isLan,isRelay,candidateType:remoteCandidateType||localCandidateType||null,localCandidateType,remoteCandidateType,
   availableOutgoingBitrate:finite(pair?.availableOutgoingBitrate),
   packetsLost:finite(isLocal?remote?.packetsLost:video?.packetsLost),
   packetLossRate:isLocal?finite(remote?.fractionLost):lossValid&&lostDelta+receivedDelta>0?lostDelta/(lostDelta+receivedDelta):null,

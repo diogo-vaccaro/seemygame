@@ -277,5 +277,41 @@ describe('Módulo: stats.js', () => {
     it('pode ser chamado de forma segura para peer inexistente', () => {
       expect(() => stopStatsMonitor('unknown-peer')).not.toThrow();
     });
+
+    it('deve identificar conexão LAN a partir de candidatos host e RTT baixo', async () => {
+      const peerId = 'peer-stats-lan';
+      setupStatsDom(peerId);
+
+      const pc = new MockRTCPeerConnection();
+      pc.getStats = vi.fn().mockResolvedValue([
+        {
+          type: 'candidate-pair',
+          state: 'succeeded',
+          localCandidateId: 'cand-local',
+          remoteCandidateId: 'cand-remote',
+          currentRoundTripTime: 0.002 // 2 ms
+        },
+        {
+          id: 'cand-local',
+          type: 'local-candidate',
+          candidateType: 'host',
+          address: '192.168.1.50'
+        },
+        {
+          id: 'cand-remote',
+          type: 'remote-candidate',
+          candidateType: 'host',
+          address: '192.168.1.60'
+        }
+      ]);
+
+      startStatsMonitor(peerId, pc);
+      await vi.advanceTimersByTimeAsync(1000);
+
+      const rttElem = document.getElementById(`stat-rtt-${peerId}`);
+      expect(rttElem.innerText).toContain('2 ms (LAN)');
+
+      stopStatsMonitor(peerId);
+    });
   });
 });
