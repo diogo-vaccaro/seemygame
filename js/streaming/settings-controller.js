@@ -5,7 +5,7 @@ import { captureVideoConstraints, videoScaleForProfile } from './quality.js';
 /** Change resolution/FPS live, but codec changes require a new negotiation/capture. */
 export function bindStreamingQuality(session, { getStream, getCalls, getProvider, onSettings, showToast }) {
   let pending = Promise.resolve();
-  for (const id of ['quality-preset', 'bitrate-slider', 'video-codec-select', 'degradation-preference-select']) {
+  for (const id of ['quality-preset', 'stream-resolution-select', 'stream-fps-select', 'bitrate-slider', 'video-codec-select', 'degradation-preference-select']) {
     session.addEventListener(document.getElementById(id), 'change', () => {
       if (!getStream()) return;
       if (id === 'video-codec-select') { showToast('O novo codec será usado ao reiniciar a transmissão.', 'info'); return; }
@@ -17,7 +17,7 @@ export function bindStreamingQuality(session, { getStream, getCalls, getProvider
       pending = pending.catch(() => {}).then(async () => {
         if (session.isDisposed || !getStream()) return;
         const stream = getStream(), track = stream.getVideoTracks()[0];
-        if (id === 'quality-preset' && !isNativeCaptureProvider(getProvider())) {
+        if (['quality-preset','stream-resolution-select','stream-fps-select'].includes(id) && !isNativeCaptureProvider(getProvider())) {
           try { await track?.applyConstraints?.(captureVideoConstraints(settings)); }
           catch (_) { showToast('A fonte não aceitou a resolução/FPS; confira o resultado no diagnóstico.', 'info'); }
         }

@@ -1,0 +1,55 @@
+<section class="video-settings" aria-label="Qualidade da transmissão">
+  <div class="video-settings-grid">
+    <div class="streaming-option">
+      <label for="stream-resolution-select">Resolução</label>
+      <select id="stream-resolution-select" aria-describedby="stream-resolution-note">
+        <option value="720">1280 × 720 · HD</option>
+        <option value="1080" selected>1920 × 1080 · Full HD</option>
+      </select>
+      <p id="stream-resolution-note" class="streaming-option-note">720p exige menos processamento e banda; 1080p preserva mais detalhes.</p>
+    </div>
+    <div class="streaming-option">
+      <label for="stream-fps-select">Taxa de quadros</label>
+      <select id="stream-fps-select" aria-describedby="stream-fps-note">
+        <option value="30">30 FPS</option>
+        <option value="60" selected>60 FPS</option>
+        <option value="120">120 FPS · experimental</option>
+      </select>
+      <p id="stream-fps-note" class="streaming-option-note">Alvo de captura e envio. O diagnóstico mostra o FPS realmente entregue.</p>
+    </div>
+  </div>
+  <div class="streaming-option">
+    <div class="streaming-option-label">
+      <label for="bitrate-slider">Bitrate máximo</label>
+      <output id="bitrate-display" for="bitrate-slider" class="bitrate-value">7.5 Mbps</output>
+    </div>
+    <input type="range" id="bitrate-slider" min="500" max="50000" step="250" value="7500" aria-describedby="stream-bitrate-note">
+    <p id="stream-bitrate-note" class="streaming-option-note">Mais bitrate melhora detalhes e exige mais upload. A adaptação automática pode usar menos que este teto. Resolução e FPS não alteram sua escolha.</p>
+  </div>
+  <div class="streaming-option video-settings-mode">
+    <div class="streaming-option-label">
+      <label for="stream-performance-mode">Objetivo da transmissão</label>
+      <button type="button" class="streaming-help-button" data-streaming-help="stream-performance-help" aria-label="Entender os modos de transmissão" aria-describedby="stream-performance-help" aria-expanded="false">?</button>
+    </div>
+    <select id="stream-performance-mode" aria-describedby="stream-performance-note">
+      <option value="smooth" selected>Compartilhamento / fluidez · padrão</option>
+      <option value="responsive">Latência mínima · experimental</option>
+    </select>
+    <p id="stream-performance-note" class="streaming-option-note" aria-live="polite"></p>
+    <div id="stream-performance-help" class="streaming-option-tooltip" role="tooltip" popover="manual" hidden>
+      <strong>Fluidez ou frames mais recentes</strong>
+      <p>Compartilhamento mantém uma pequena fila antes da codificação para preservar mais frames. Sob sobrecarga, ela pode aumentar o atraso.</p>
+      <p>Latência mínima descarta frames antigos antes da codificação. Pode ser útil para testar controle remoto, mas pode reduzir FPS e aumentar engasgos. Os testes ainda não demonstraram menor latência remota de forma consistente.</p>
+      <p>Disponível na captura nativa. A mudança exige reiniciar a transmissão. Não altera codec, resolução, FPS ou bitrate, e não descarta pacotes de vídeo já comprimidos.</p>
+    </div>
+  </div>
+  <!-- Internal preset adapter for older integrations and diagnostic runners. -->
+  <select id="quality-preset" hidden aria-hidden="true" tabindex="-1">
+    <option value="ultra">720p60</option>
+    <option value="balanced" selected>1080p60</option>
+    <option value="high">1080p60 alta nitidez</option>
+    <option value="hd120">720p120</option>
+    <option value="fhd120">1080p120</option>
+    <option value="custom">Personalizado</option>
+  </select>
+</section>

@@ -65,3 +65,12 @@
 body.streamer-page > .streaming-options { margin: 12px 0; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 body.streamer-page > .streaming-options .streaming-options-heading, body.streamer-page > .streaming-options .streaming-options-footer { grid-column: 1 / -1; }
 @media (max-width: 700px) { body.streamer-page > .streaming-options { grid-template-columns: 1fr; } .streaming-option-label label span { display: block; margin: 3px 0 0; } }
+
+.video-settings { display: grid; gap: 18px; min-width: 0; padding: 18px; background: var(--bg-input); border: 1px solid var(--border-color); border-radius: 12px; }
+.video-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.video-settings .streaming-option > label { display: block; margin-bottom: 8px; font-size: 13px; font-weight: 600; color: var(--text-main); }
+.video-settings input[type="range"] { width: 100%; accent-color: var(--accent); }
+.video-settings input:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.video-settings-mode { padding-top: 16px; border-top: 1px solid var(--border-color); }
+.tuning-bar > .video-settings { flex: 1 1 100%; }
+@media (max-width: 480px) { .video-settings-grid { grid-template-columns: 1fr; } }
