@@ -1,5 +1,7 @@
 # Relatório de Benchmark Rigoroso Multivariável E2E
 
+> **Retificação (07/10/2026):** este documento foi gerado pelo runner anterior. Os 32 sucessos funcionais tinham apenas 3–4 segundos de evidência estável e qualificação insuficiente; os 12 casos Web falharam por geometria, antes da amostragem. As declarações de vencedor estatístico, isolamento da GPU e recomendação definitiva não são sustentadas por esta rodada. Consulte [a revalidação](revalidacao-benchmark-d3d12-web-2026-10-07.md). Os dados históricos abaixo são preservados; o runner corrigido gera relatórios por execução, sem sobrescrever esta evidência.
+
 **Data:** 07/10/2026, 00:32:39
 **Topologia:** Duas Máquinas Reais — Emissor Desktop (NVIDIA RTX 3070) $\to$ Receptor Notebook (AMD Ryzen 7 5800H / Tailscale)
 **Escopo:** Avaliação cruzada de Codecs (H.264, HEVC, AV1), Encoders (NVENC, MF, CPU, Auto), APIs de Captura (D3D12, D3D11, Web), Resoluções (720p/1080p), Taxas de FPS (30/60/120) sob Carga Leve e Carga de FPS Ilimitado.
