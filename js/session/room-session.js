@@ -1062,6 +1062,11 @@ async function initRoomApp(options = {}) {
     },
     getPeer: () => roomState.peer,
     isAuthorizedPeer: id => roomState.roomManager?.isPeerAuthorized(id),
+    getDataConnections: () => Array.from(roomState.roomManager?.meshConnections?.values() || []),
+    getPeerRole: id => {
+      const conn = roomState.roomManager?.meshConnections?.get(id);
+      return conn?.metadata?.role || conn?.role || null;
+    },
     getLocalPeerId: () => roomState.peer?.id,
     showToast,
     broadcast: (data, excludePeerId) => roomState.roomManager?.broadcast(data, excludePeerId)
@@ -1092,6 +1097,7 @@ async function initRoomApp(options = {}) {
     chatManager,
     getPeerId: () => roomState.peer?.id || 'room-member',
     getDisplayName: () => roomState.userName,
+    isHost: () => Boolean(roomState.roomManager?.isMaster || session?.getRole?.() === 'host'),
     getActiveVideoStream: () => roomState.localStream || [...roomState.remoteStreams.values()].find(entry => entry.stream)?.stream,
     getVoiceStreams: () => ({
       localMic: voiceManager.localStream,

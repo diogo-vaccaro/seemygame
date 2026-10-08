@@ -13,6 +13,8 @@ import { pipController } from './pip-controller.js';
 import { annotateManager } from './annotate.js';
 import { pollManager } from './poll-manager.js';
 import { multitrackRecorder } from './multitrack-recorder.js';
+import { roomLayoutController } from './room-layout.js';
+import { notepadManager } from './notepad.js';
 
 function getVisibleRoomVideo() {
   const videos = [
@@ -41,15 +43,17 @@ export class RoomToolsController {
     this.domAbort = null;
   }
 
-  bindSession({
-    session = null,
-    broadcast = null,
-    chatManager = null,
-    getPeerId = () => 'me',
-    getDisplayName = () => 'Jogador',
-    getActiveVideoStream = () => null,
-    getVoiceStreams = () => ({})
-  } = {}) {
+  bindSession(options = {}) {
+    const {
+      session = null,
+      broadcast = null,
+      chatManager = null,
+      getPeerId = () => 'me',
+      getDisplayName = () => 'Jogador',
+      getActiveVideoStream = () => null,
+      getVoiceStreams = () => ({}),
+      isHost = null
+    } = options;
     this.session = session;
     this.broadcast = broadcast;
     this.chatManager = chatManager;
@@ -62,6 +66,18 @@ export class RoomToolsController {
     annotateManager.setBroadcast(broadcast);
     annotateManager.getLocalPeerId = getPeerId;
     pollManager.setBroadcast(broadcast);
+
+    notepadManager.setBroadcast(broadcast);
+    notepadManager.getLocalPeerId = getPeerId;
+    notepadManager.getDisplayName = getDisplayName;
+    const resolveIsHost = () => Boolean(
+      (typeof isHost === 'function' ? isHost() : isHost) ||
+      session?.isMaster ||
+      session?.role === 'streamer' ||
+      (session?.getRole && session.getRole() === 'host') ||
+      (session?.roomState?.roomManager?.isMaster)
+    );
+    notepadManager.setIsHost(resolveIsHost);
 
     // Publicação automática de enquetes no chat
     pollManager.setOnChatAnnounce((summaryText) => {
@@ -94,7 +110,10 @@ export class RoomToolsController {
         d.register('ANNOTATE_SYNC', (data) => annotateManager.handleRemoteMessage(data)),
         d.register('ANNOTATE_REQUEST_SYNC', (data) => annotateManager.handleRemoteMessage(data)),
         ...['POLL_CREATE', 'POLL_VOTE', 'POLL_END', 'POLL_SYNC_REQUEST', 'POLL_SYNC'].map(type =>
-          d.register(type, (data, source) => pollManager.handleRemoteMessage(data, source?.peer)))
+          d.register(type, (data, source) => pollManager.handleRemoteMessage(data, source?.peer))),
+        d.register('NOTE_UPDATE', (data, source) => notepadManager.handleRemoteMessage(data, source?.peer)),
+        d.register('NOTE_REQUEST_SYNC', (data, source) => notepadManager.handleRemoteMessage(data, source?.peer)),
+        d.register('NOTE_SYNC', (data, source) => notepadManager.handleRemoteMessage(data, source?.peer))
       ];
       this.cleanups.push(() => unsubs.forEach(u => u()));
     }
@@ -118,7 +137,7 @@ export class RoomToolsController {
       this.cleanups.push(() => streamerBtn.removeEventListener('click', onClick));
     }
 
-    // 2. Botão de Ferramentas da Sala no Dock Inferior
+    // 2. Botão de Ferramentas da Sala e Botão de Clipar no Dock Inferior
     const toolsBtn = document.getElementById('dock-room-tools-btn');
     if (toolsBtn) {
       const toggleMenu = (e) => {
@@ -129,6 +148,13 @@ export class RoomToolsController {
       this.cleanups.push(() => toolsBtn.removeEventListener('click', toggleMenu));
     }
 
+    const clipDockBtn = document.getElementById('dock-clip-btn');
+    if (clipDockBtn) {
+      const onClipClick = () => this.triggerClip();
+      clipDockBtn.addEventListener('click', onClipClick);
+      this.cleanups.push(() => clipDockBtn.removeEventListener('click', onClipClick));
+    }
+
     // 3. Fechar menu ao clicar fora ou tecla Escape
     const onDocClick = (e) => {
       if (this.isMenuOpen && this.menuEl && !this.menuEl.contains(e.target) && e.target !== toolsBtn) {
@@ -136,10 +162,22 @@ export class RoomToolsController {
       }
     };
     const onDocKeydown = (e) => {
+      const active = document.activeElement;
+      const inInput = active && (
+        active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.tagName === 'SELECT' ||
+        active.isContentEditable ||
+        active.closest?.('.modal-overlay[style*="flex"], .modal-overlay[style*="block"]')
+      );
+
       if (e.key === 'Escape') {
         if (this.isMenuOpen) this.closeMenu();
         this.closePollModal();
         this.closeMultitrackModal();
+        notepadManager.closeModal();
+      } else if (!inInput && e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.altKey && !e.metaKey) {
+        this.triggerClip();
       }
     };
     document.addEventListener('click', onDocClick);
@@ -152,6 +190,10 @@ export class RoomToolsController {
     // 4. Modal de Enquete e Modal Multitrack
     this._bindPollModal();
     this._bindMultitrackModal();
+
+    // 5. Layouts e Bloco de Notas
+    roomLayoutController.bindDOM();
+    notepadManager.mountModal();
   }
 
   toggleMenu() {
@@ -176,11 +218,32 @@ export class RoomToolsController {
         <button type="button" class="room-tools-close" aria-label="Fechar">✖️</button>
       </div>
       <div class="room-tools-list">
+        <button type="button" class="room-tool-item" data-action="clip">
+          <span class="tool-icon">🎬</span>
+          <div class="tool-info">
+            <strong>Clipar Últimos 30s (C)</strong>
+            <small>Salva os últimos segundos em vídeo e áudio meme</small>
+          </div>
+        </button>
         <button type="button" class="room-tool-item" data-action="annotate">
           <span class="tool-icon">✏️</span>
           <div class="tool-info">
             <strong>Anotar no Vídeo</strong>
             <small>Desenhe táticas diretamente sobre o stream</small>
+          </div>
+        </button>
+        <button type="button" class="room-tool-item" data-action="notepad">
+          <span class="tool-icon">📝</span>
+          <div class="tool-info">
+            <strong>Bloco de Notas</strong>
+            <small>Anotações e códigos sincronizados P2P</small>
+          </div>
+        </button>
+        <button type="button" class="room-tool-item" data-action="layout">
+          <span class="tool-icon">🖼️</span>
+          <div class="tool-info">
+            <strong>Alternar Layout (F)</strong>
+            <small>Alterna entre Grade, Destaque e Cinema</small>
           </div>
         </button>
         <button type="button" class="room-tool-item" data-action="poll">
@@ -255,8 +318,17 @@ export class RoomToolsController {
 
   executeAction(action) {
     switch (action) {
+      case 'clip':
+        this.triggerClip();
+        break;
       case 'annotate':
         this.toggleAnnotate();
+        break;
+      case 'notepad':
+        notepadManager.openModal();
+        break;
+      case 'layout':
+        this.cycleLayout();
         break;
       case 'poll':
         this.openPollModal();
@@ -277,6 +349,31 @@ export class RoomToolsController {
         document.getElementById('toggle-soundboard-btn')?.click();
         break;
     }
+  }
+
+  triggerClip(sourceId = null) {
+    if (this.session?.features?.clipEditor) {
+      this.session.features.clipEditor.exportClip(sourceId);
+      return true;
+    }
+    const clipBtn = document.getElementById('clip-btn');
+    if (clipBtn) {
+      clipBtn.click();
+      return true;
+    }
+    const cardClipBtn = document.querySelector('.video-card.active .btn-card-clip, .video-card .btn-card-clip');
+    if (cardClipBtn) {
+      cardClipBtn.click();
+      return true;
+    }
+    return false;
+  }
+
+  cycleLayout() {
+    const current = roomLayoutController.getLayoutMode();
+    if (current === 'grid') roomLayoutController.setLayoutMode('focus');
+    else if (current === 'focus') roomLayoutController.setLayoutMode('cinema');
+    else roomLayoutController.setLayoutMode('grid');
   }
 
   toggleAnnotate() {

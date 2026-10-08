@@ -579,6 +579,8 @@ async function initStreamerApp(options = {}) {
     },
     getPeer: () => streamerState.peer,
     getLocalPeerId: () => streamerState.streamerId,
+    getDataConnections: () => Array.from(streamerState.connectedViewers.values()),
+    getPeerRole: id => streamerState.connectedViewers.get(id)?.metadata?.role || streamerState.connectedViewers.get(id)?.role || null,
     showToast,
     broadcast: (data, excludePeerId) => {
       streamerState.connectedViewers.forEach((conn, peerId) => {
