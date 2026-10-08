@@ -82,6 +82,8 @@ export function setupGamepadTesterModal(compatibilityContext) {
   }, { signal: bindingAbort.signal });
 
   select?.addEventListener('change', () => {
+    const webIndex = /^(?:web|vacant):(\d+)$/.exec(select.value);
+    if (webIndex) compatibilityContext.setSelectedGamepadIndex?.(Number(webIndex[1]));
     updateHud();
   }, { signal: bindingAbort.signal });
 
@@ -177,7 +179,8 @@ export function setupGamepadTesterModal(compatibilityContext) {
         connectedPads.length ? '' : nativeXInputPads.map((gamepad) => gamepad.index).join(',')
       ].join(';');
       if (signature !== gamepadOptionsSignature) {
-        const currentVal = select.value;
+        const selectedIndex = compatibilityContext.getSelectedGamepadIndex?.();
+        const currentVal = selectedIndex != null ? `web:${selectedIndex}` : select.value;
         gamepadOptionsSignature = signature;
         select.replaceChildren();
         if (connectedPads.length > 0) {
@@ -252,6 +255,9 @@ export function setupGamepadTesterModal(compatibilityContext) {
     const gp = selectedWebIndex === null
       ? nativeXInputPads.find((gamepad) => gamepad.index === selectedNativeIndex) || null
       : connectedPads.find((gamepad) => gamepad.index === selectedWebIndex) || null;
+    if (gp && selectedWebIndex !== null && compatibilityContext.getSelectedGamepadIndex?.() == null) {
+      compatibilityContext.setSelectedGamepadIndex?.(gp.index);
+    }
     buttonIndicators.forEach((indicator) => indicator.classList.remove('is-pressed'));
 
     const multiHint = document.getElementById('gamepad-multi-hint');
@@ -336,6 +342,9 @@ export function setupGamepadTesterModal(compatibilityContext) {
 
       if (viewer3D) {
         viewer3D.updateInputs({
+          device: gp.id,
+          index: gp.index,
+          mapping: gp.mapping || 'standard',
           axes: gp.axes,
           buttons: mappedButtons.map((pressed, i) => {
             const physicalIdx = compatibilityContext.currentGamepadMapping.indexOf(i);
@@ -393,6 +402,8 @@ export function setupGamepadTesterModal(compatibilityContext) {
 
   const openModal = () => {
     modal.style.display = 'flex';
+    // The laboratory may have changed the session's selection since the last open.
+    gamepadOptionsSignature = '';
     viewer3D?.start();
     updateDriverStatus();
     updateMappingUI();

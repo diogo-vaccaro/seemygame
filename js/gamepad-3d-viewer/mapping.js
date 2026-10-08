@@ -182,12 +182,12 @@ updateInputs(gamepadData = {}) {
     }
 
     // Helper para botões que afundam e modulam emissivo
-    const updateDepress = (obj, pressed, glowColor = null) => {
+    const updateDepress = (obj, pressed, glowColor = null, depth = PRESS_DEPTH) => {
       if (!obj) return;
       if (pressed) hasActive = true;
       const init = this.initialTransforms.get(obj);
       if (init) {
-        obj.position.y = init.pos.y - (pressed ? PRESS_DEPTH : 0);
+        obj.position.y = init.pos.y - (pressed ? depth : 0);
       }
       this._setPartEmissive(obj, pressed, glowColor);
     };
@@ -203,15 +203,18 @@ updateInputs(gamepadData = {}) {
     updateDepress(this.parts.buttonY, getBtn(3).pressed, 0x06b6d4);
 
     // 6. Botões do Sistema (Back, Start, Guide)
-    updateDepress(this.parts.buttonBack, getBtn(8).pressed, 0x38bdf8);
-    updateDepress(this.parts.buttonStart, getBtn(9).pressed, 0x38bdf8);
+    // Low-profile system caps have less clearance above the housing.
+    const systemDepth = this.gamepadType === 'nintendo' ? 0.01 : PRESS_DEPTH;
+    updateDepress(this.parts.buttonBack, getBtn(8).pressed, 0x38bdf8, systemDepth);
+    updateDepress(this.parts.buttonStart, getBtn(9).pressed, 0x38bdf8, systemDepth);
 
     const guidePressed = getBtn(16).pressed;
     if (this.parts.buttonGuide) {
       if (guidePressed) hasActive = true;
       const init = this.initialTransforms.get(this.parts.buttonGuide);
       if (init) {
-        this.parts.buttonGuide.position.y = init.pos.y - (guidePressed ? PRESS_DEPTH : 0);
+        const guideDepth = this.gamepadType === 'xbox' ? 0.02 : PRESS_DEPTH;
+        this.parts.buttonGuide.position.y = init.pos.y - (guidePressed ? guideDepth : 0);
       }
     }
 

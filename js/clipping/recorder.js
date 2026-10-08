@@ -137,29 +137,10 @@ start(stream) {
               return;
             }
 
-            // Fallback (ou mudança de vídeo): conforme especificação W3C, não podemos injetar
-            // trilhas em MediaRecorder em gravação. Reinicia gravador com nova topologia,
-            // resetando histórico incompatível para não corromper cabeçalhos WebM.
-            if (this.mediaRecorder && this.mediaRecorder.state !== 'inactive') {
-              try { this.mediaRecorder.stop(); } catch (_) {}
-            }
-            this.clear();
-            try { isolatedStream.addTrack(e.track); } catch (_) {}
-            this.recordingTracks.push({ track: e.track, owned: false });
-
-            const hasAudioNow = typeof this.recordingStream.getAudioTracks === 'function' &&
-              this.recordingStream.getAudioTracks().length > 0;
-            this.mimeType = this._resolveSupportedMimeType(hasAudioNow);
-            const recOptions = { videoBitsPerSecond: this.videoBitsPerSecond, videoKeyFrameIntervalDuration: 2000, ...(this.mimeType ? { mimeType: this.mimeType } : {}) };
-
-            try {
-              const newRec = new MediaRecorder(this.recordingStream, recOptions);
-              this.mediaRecorder = newRec;
-              this._bindRecorderEvents(newRec, generation);
-              newRec.start(this.timesliceMs || 3000);
-            } catch (reErr) {
-              console.warn('[ClipRecorder] Falha ao recriar MediaRecorder:', reErr);
-            }
+            // MediaRecorder requires a fixed track set. Rebuild through start()
+            // so derived profiles, listeners and failed encoders are cleaned up.
+            const sourceStream = this.stream;
+            this.start(sourceStream);
           };
 
           const onTrackRemoved = (e) => {
@@ -169,12 +150,10 @@ start(stream) {
             // P1: Desconecta a fonte do mixer para não continuar gravando áudio desativado/removido
             if (e.track.kind === 'audio') {
               this._disconnectAudioTrackFromMixer(e.track);
+              if (this._audioDestination) return;
             }
-
-            // Fallback sem mixer: remove da topologia isolada
-            if (!this._audioDestination && isolatedStream) {
-              try { isolatedStream.removeTrack(e.track); } catch (_) {}
-            }
+            const sourceStream = this.stream;
+            this.start(sourceStream);
           };
 
           this.stream.addEventListener('addtrack', onTrackAdded);

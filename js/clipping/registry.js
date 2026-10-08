@@ -3,15 +3,15 @@ import { NativeReplayRecorder } from './native-recorder.js';
 export class ClipRecorderRegistry {
   constructor(options = {}) {
     let savedDuration = 30;
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
         const item = window.localStorage.getItem('seemygame_clip_duration');
         if (item !== null) {
           const parsed = Number(item);
           if (!isNaN(parsed) && parsed >= 0) savedDuration = parsed;
         }
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
     this.options = { maxDurationSeconds: savedDuration, ...options };
     this.sources = new Map();
     let preferences = {};
@@ -28,11 +28,11 @@ export class ClipRecorderRegistry {
     const parsed = Number(seconds);
     const val = isNaN(parsed) || parsed < 0 ? 30 : parsed;
     this.options = { ...this.options, maxDurationSeconds: val };
-    if (typeof window !== 'undefined' && window.localStorage) {
-      try {
+    try {
+      if (typeof window !== 'undefined' && window.localStorage) {
         window.localStorage.setItem('seemygame_clip_duration', String(val));
-      } catch (_) {}
-    }
+      }
+    } catch (_) {}
     for (const recorder of this.recorders.values()) {
       if (recorder) {
         recorder.maxDurationSeconds = val;
@@ -109,7 +109,8 @@ export class ClipRecorderRegistry {
     const native = this.options.getNativeContext?.(id);
     const sameBackend = Boolean(current?.sessionId) === Boolean(native?.sessionId) &&
       (!native?.sessionId || current?.sessionId === native.sessionId);
-    if (unchanged && current && sameBackend) return true;
+    if (unchanged && current && sameBackend && !current.lastError &&
+        (current.isRecording || current.ready)) return true;
     this.selectedSourceId = id;
     return this._startSelected();
   }
@@ -132,6 +133,13 @@ export class ClipRecorderRegistry {
     this.lastError = null;
 
     this.recorders.set(id, recorder);
+    if (recorder.ready?.then) {
+      recorder.ready = recorder.ready.then(() => {
+        if (this.recorders.get(id) !== recorder) return;
+        this.lastError = recorder.lastError || null;
+        this.onChange?.();
+      });
+    }
     this.activeSourceId = id;
     this._compatRecordingOverride = null;
     this.onChange?.();
@@ -160,8 +168,9 @@ export class ClipRecorderRegistry {
 
   _stopRecorders() {
     this.lastError = null;
-    this.recorders.forEach(recorder => recorder.stop());
+    const pending = [...this.recorders.values()].map(recorder => recorder.stop());
     this.recorders.clear(); this.activeSourceId = null; this._compatRecordingOverride = null;
+    return Promise.allSettled(pending);
   }
 
   isRecordingFor(sourceId) {
@@ -170,16 +179,16 @@ export class ClipRecorderRegistry {
 
   stop(sourceId = null) {
     if (sourceId === null || sourceId === undefined) {
-      this._stopRecorders(); this.sources.clear(); this.selectedSourceId = null;
+      const pending = this._stopRecorders(); this.sources.clear(); this.selectedSourceId = null;
       this.activeSourceId = null;
       this._compatRecordingOverride = false;
       this.onChange?.();
-      return;
+      return pending;
     }
 
     const id = this._normalizeSourceId(sourceId);
     const recorder = this.recorders.get(id);
-    recorder?.stop();
+    const pending = recorder?.stop();
     this.recorders.delete(id);
     this.sources.delete(id);
     if (this.activeSourceId === id) {
@@ -190,6 +199,7 @@ export class ClipRecorderRegistry {
       this._startSelected();
     }
     this.onChange?.();
+    return pending;
   }
 
   async exportClip(customFilename = null, sourceId = null) {

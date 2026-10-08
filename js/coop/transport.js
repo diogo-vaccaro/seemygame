@@ -73,7 +73,9 @@ export function setCoopInputTarget(compatibilityContext, rect) {
 }
 
 export function initCompanionAgentConnection(compatibilityContext, token = null, isExplicit = false) {
-  const authToken = token || (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_coop_token') : null);
+  let storedToken = null;
+  try { storedToken = localStorage.getItem('seemygame_coop_token'); } catch (_) {}
+  const authToken = token || storedToken;
   if (!authToken) {
     if (isExplicit) {
       compatibilityContext.showToast('Informe o token de pareamento para ativar o Companion Agent.', 'info');

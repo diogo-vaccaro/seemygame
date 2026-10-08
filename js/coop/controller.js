@@ -56,6 +56,9 @@ const compatibilityPorts = Object.defineProperties({}, {
 "broadcastSlotsCallback": { get: () => broadcastSlotsCallback, set: value => { broadcastSlotsCallback = value; } },
 "gamepadLoopId": { get: () => gamepadLoopId, set: value => { gamepadLoopId = value; } },
 "lastGamepadState": { get: () => lastGamepadState, set: value => { lastGamepadState = value; } },
+"selectedGamepadIndex": { get: () => selectedGamepadIndex },
+"setSelectedGamepadIndex": { get: () => setSelectedGamepadIndex },
+"getSelectedGamepadIndex": { get: () => getSelectedGamepadIndex },
 "pressedBrowserKeys": { get: () => pressedBrowserKeys },
 "slotPressedKeys": { get: () => slotPressedKeys },
 "capabilityWarningShown": { get: () => capabilityWarningShown, set: value => { capabilityWarningShown = value; } },
@@ -162,6 +165,12 @@ let broadcastSlotsCallback = null;
 let gamepadLoopId = null;
 
 let lastGamepadState = null;
+let selectedGamepadIndex = null;
+
+function setSelectedGamepadIndex(index) {
+  if (index === null || (Number.isInteger(index) && index >= 0)) selectedGamepadIndex = index;
+}
+function getSelectedGamepadIndex() { return selectedGamepadIndex; }
 
 const pressedBrowserKeys = new Set();
 
@@ -321,6 +330,8 @@ function getButtonDisplayLabel(...args) { return getButtonDisplayLabelImpl(...ar
 return {
 get isInputTestMode() { return inputTestMode; },
 setInputTestMode,
+setSelectedGamepadIndex,
+getSelectedGamepadIndex,
 get coopSlots() { return coopSlots; },
 get pressedBrowserKeys() { return pressedBrowserKeys; },
 get slotPressedKeys() { return slotPressedKeys; },

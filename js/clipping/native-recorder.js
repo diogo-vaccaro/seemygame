@@ -25,7 +25,7 @@ export class NativeReplayRecorder {
       sessionId: this.sessionId, seconds: this.maxDurationSeconds
     })).then(() => {
       if (generation === this._generation) this.isRecording = true;
-    }).catch(error => { this.lastError = error; });
+    }).catch(error => { if (generation === this._generation) this.lastError = error; });
     return true;
   }
   stop() {

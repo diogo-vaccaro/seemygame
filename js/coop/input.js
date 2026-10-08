@@ -266,12 +266,20 @@ export function getButtonDisplayLabel(buttonIndex, preset = 'xbox', deviceType =
   return XBOX_BUTTON_NAMES[idx] || `B${idx}`;
 }
 
-export function pollGamepads(compatibilityContext, targetIndex = 0) {
-  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn || compatibilityContext.activeHostCapabilities.gamepad === false) return;
+export function pollGamepads(compatibilityContext) {
+  if (!compatibilityContext.isPlayer2 || !compatibilityContext.activeDataConn) return;
+  if (compatibilityContext.activeHostCapabilities.gamepad === false) {
+    compatibilityContext.gamepadLoopId = requestAnimationFrame(compatibilityContext.pollGamepads);
+    return;
+  }
 
   try {
     const gamepads = typeof navigator !== 'undefined' && navigator.getGamepads ? navigator.getGamepads() : [];
-    const gp = gamepads[targetIndex] || gamepads[0]; // Captura o controle alvo ou o primeiro conectado
+    // RAF passes a timestamp, never a physical device index. An explicit
+    // selection stays pinned across disconnects instead of stealing another pad.
+    const targetIndex = compatibilityContext.selectedGamepadIndex;
+    const connected = Array.from(gamepads).filter(pad => pad?.connected);
+    const gp = targetIndex == null ? connected[0] : connected.find(pad => pad.index === targetIndex);
 
     if (gp && gp.connected) {
       const device = `${gp.index ?? targetIndex}:${gp.id || ''}`;

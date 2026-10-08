@@ -11,7 +11,7 @@ export function bindControllerLab(session, { getPeerId, getDisplayName, getConne
     onError: message => showToast(message, 'info'),
     onOpen: () => {
       coopController?.setInputTestMode?.(true);
-      selectedIndex = null; lastSampleAt = -Infinity; localSample = null;
+      selectedIndex = coopController?.getSelectedGamepadIndex?.() ?? null; lastSampleAt = -Infinity; localSample = null;
       view?.open(lab.owner && canInvite, accessSnapshot(lab.list()).canManage);
       frame = requestAnimationFrame(sample);
     },
@@ -42,7 +42,10 @@ export function bindControllerLab(session, { getPeerId, getDisplayName, getConne
       lastSampleAt = timestamp;
       let pads = [];
       try { pads = Array.from(navigator.getGamepads?.() || []).filter(pad => pad?.connected); } catch (_) {}
-      if (selectedIndex === null || !pads.some(pad => pad.index === selectedIndex)) selectedIndex = pads[0]?.index ?? -1;
+      if (selectedIndex === null && pads.length) {
+        selectedIndex = pads[0].index;
+        coopController?.setSelectedGamepadIndex?.(selectedIndex);
+      }
       const pad = pads.find(pad => pad.index === selectedIndex);
       localSample = pad || null;
       lab.sample(document.hidden ? null : localSample);
@@ -56,7 +59,9 @@ export function bindControllerLab(session, { getPeerId, getDisplayName, getConne
       const count = lab.invite();
       showToast(count ? 'Convite enviado aos amigos conectados.' : 'Compartilhe o link da sala. Os amigos recebem o convite quando se conectarem.', 'info');
     },
-      onReady: ready => lab.setReady(ready), onDevice: index => { selectedIndex = index; lab.sample(null); },
+      onReady: ready => lab.setReady(ready), onDevice: index => {
+        selectedIndex = index; coopController?.setSelectedGamepadIndex?.(index); lab.sample(null);
+      },
       onGrantAccess: async peerId => {
         if (!lab.active || !lab.owner || !accessSnapshot(lab.list()).canManage) return;
         const player = lab.players.get(peerId);

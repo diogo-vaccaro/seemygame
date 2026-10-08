@@ -122,22 +122,23 @@ export class NativeCaptureProvider {
     this._operationId = 0;
   }
 
-  async start({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, captureApi = null, showCursor = undefined, sourceType = null, source = null, width, height, fps, bitrateKbps, excludeApp = null } = {}) {
+  async start({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, captureApi = null, rawVideoQueue = null, showCursor = undefined, sourceType = null, source = null, width, height, fps, bitrateKbps, excludeApp = null } = {}) {
     if (!sourceId) throw new Error('Selecione uma janela ou monitor antes de iniciar');
 
     const operationId = ++this._operationId;
     const browserCaps = getVideoCapabilities();
     const capabilities = browserCaps.receive.length ? await getNativeCaptureCapabilities() : null;
+    if (operationId !== this._operationId) throw new CaptureCancelledError();
     if (browserCaps.receive.length && capabilities?.supports_h264 !== undefined) {
       const choice = selectCodec(videoCodec || 'auto', browserCaps, 'receive', capabilities);
       if (!choice.selected) throw new Error(choice.reason);
       this.codecSelection = choice;
       videoCodec = choice.selected;
     } else if (videoCodec === 'auto') videoCodec = 'h264';
-    this.requestedSettings = { width, height, fps, bitrateKbps, videoCodec, captureBackend, captureApi, h264Encoder };
+    this.requestedSettings = { width, height, fps, bitrateKbps, videoCodec, captureBackend, captureApi, h264Encoder, rawVideoQueue };
     let nativeState;
     try {
-      nativeState = await startNativeCapture({ sourceId, audioMode, videoCodec, h264Encoder, captureBackend, captureApi, showCursor, width, height, fps, bitrateKbps, excludeApp });
+      nativeState = await startNativeCapture({ sourceId, audioMode, videoCodec, h264Encoder, captureBackend, captureApi, rawVideoQueue, showCursor, width, height, fps, bitrateKbps, excludeApp });
     } catch (error) {
       throw normalizeCaptureError(error, 'Falha ao iniciar o worker nativo');
     }
@@ -171,28 +172,33 @@ export class NativeCaptureProvider {
       source
     };
     if (operationId !== this._operationId) {
-      await this.disposeResult({ stream, session });
+      await this.disposeResult({ stream, session, bridge });
       throw new CaptureCancelledError();
     }
 
     this.stream = stream;
     this.session = session;
-    return { stream, session, operationId };
+    this._sessionBridge = bridge;
+    return { stream, session, operationId, bridge };
   }
 
   async stop() {
     ++this._operationId;
     const sessionId = this.session?.sessionId || null;
     const stream = this.stream;
-    if (sessionId && typeof this.mediaBridge?.closeStream === 'function') {
-      await this.mediaBridge.closeStream(sessionId).catch(() => {});
-    }
-    stopTracks(stream);
+    const bridge = this._sessionBridge || this.mediaBridge || globalThis.__SEEMYGAME_NATIVE_CAPTURE__;
+    const unsubscribe = this.unsubscribe;
+    // Release ownership before awaiting IPC; a later start owns different state.
     this.stream = null;
     this.session = null;
-    if (this.unsubscribe) {
-      try { this.unsubscribe(); } catch (error) { /* idempotente */ }
-      this.unsubscribe = null;
+    this._sessionBridge = null;
+    this.unsubscribe = null;
+    if (unsubscribe) {
+      try { unsubscribe(); } catch (error) { /* idempotente */ }
+    }
+    stopTracks(stream);
+    if (sessionId && typeof bridge?.closeStream === 'function') {
+      try { await bridge.closeStream(sessionId); } catch (_) {}
     }
     return stopNativeCapture(sessionId).catch(() => ({ state: CAPTURE_STATES.IDLE }));
   }
@@ -200,8 +206,9 @@ export class NativeCaptureProvider {
   async disposeResult(result = {}) {
     stopTracks(result.stream);
     const sessionId = result.session?.sessionId || null;
-    if (sessionId && typeof this.mediaBridge?.closeStream === 'function') {
-      await this.mediaBridge.closeStream(sessionId).catch(() => {});
+    const bridge = result.bridge || this._sessionBridge || this.mediaBridge || globalThis.__SEEMYGAME_NATIVE_CAPTURE__;
+    if (sessionId && typeof bridge?.closeStream === 'function') {
+      try { await bridge.closeStream(sessionId); } catch (_) {}
     }
     if (sessionId) await stopNativeCapture(sessionId).catch(() => {});
   }
@@ -213,10 +220,13 @@ export class NativeCaptureProvider {
 
   async reconfigure(options = {}) {
     if (!this.session?.sessionId) return null;
+    const sessionId = this.session.sessionId;
+    const operationId = this._operationId;
     const res = await reconfigureNativeCapture({
-      sessionId: this.session.sessionId,
-      ...options
+      ...options,
+      sessionId
     });
+    if (this._operationId !== operationId || this.session?.sessionId !== sessionId) return null;
     if (res) {
       this.session = { ...this.session, ...res };
       this.requestedSettings = { ...this.requestedSettings, ...options };
@@ -293,24 +303,26 @@ export class CaptureManager {
     }
   }
 
-  async stop() {
+  stop() {
+    if (this._stopPromise) return this._stopPromise;
     if (!this.provider && !this.session) {
       this.setState(CAPTURE_STATES.IDLE);
-      return { state: CAPTURE_STATES.IDLE };
+      return Promise.resolve({ state: CAPTURE_STATES.IDLE });
     }
     const providerInstance = this.provider;
-    ++this.transitionId;
-    this.setState(CAPTURE_STATES.STOPPING, { session: this.session });
-    try {
-      const result = await providerInstance?.stop?.();
-      return result || { state: CAPTURE_STATES.IDLE };
-    } finally {
-      if (this.provider === providerInstance) {
+    const transitionId = ++this.transitionId;
+    const pending = Promise.resolve().then(() => providerInstance?.stop?.()).then(result =>
+      result || { state: CAPTURE_STATES.IDLE }).finally(() => {
+      if (this._stopPromise === pending) this._stopPromise = null;
+      if (this.transitionId === transitionId && this.provider === providerInstance) {
         this.provider = null;
         this.session = null;
         this.setState(CAPTURE_STATES.IDLE);
       }
-    }
+    });
+    this._stopPromise = pending;
+    this.setState(CAPTURE_STATES.STOPPING, { session: this.session });
+    return pending;
   }
 
   async setAudioMode(audioMode) {

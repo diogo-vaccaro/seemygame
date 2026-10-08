@@ -155,11 +155,14 @@ export function createControllerLabView({ onClose, onInvite, onReady, onDevice, 
     const card = cards.find(item => !item.querySelector('.controller-lab-selector').hidden);
     if (!card) return;
     const select = card.querySelector('select');
-    const signature = pads.map(pad => `${pad.index}:${pad.id}`).join('|');
+    const signature = `${selectedIndex}:` + pads.map(pad => `${pad.index}:${pad.id}`).join('|');
     if (select.dataset.devices === signature) return;
     select.dataset.devices = signature; select.replaceChildren();
     if (!pads.length) select.add(new Option('Nenhum controle detectado', '-1'));
     for (const pad of pads) select.add(new Option(`#${pad.index + 1} · ${pad.id || 'Controle'}`, String(pad.index)));
+    if (selectedIndex !== null && selectedIndex >= 0 && !pads.some(pad => pad.index === selectedIndex)) {
+      select.add(new Option(`#${selectedIndex + 1} · Desconectado (aguardando reconexão)`, String(selectedIndex)));
+    }
     select.value = String(selectedIndex);
   }
   async function open(canInvite, canManageAccess = false) {

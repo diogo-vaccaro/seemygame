@@ -1,4 +1,5 @@
 import { sendCoopMessage } from './message-transport.js';
+import { readPreference } from '../shared/preferences.js';
 /** host: commands receive explicit compatibility ports; no page initialization. */
 export async function grantCoopPlayer(compatibilityContext, senderPeerId, conn, name, requestedSlot) {
   if (!conn || conn.peer !== senderPeerId || conn.open === false) return false;
@@ -28,7 +29,7 @@ export async function grantCoopPlayer(compatibilityContext, senderPeerId, conn, 
     deviceType: 'gamepad', connectedAt: Date.now(), generation: slotGeneration
   });
 
-  if (typeof localStorage !== 'undefined' && localStorage.getItem('seemygame_coop_token')) {
+  if (readPreference('seemygame_coop_token')) {
     compatibilityContext.initCompanionAgentConnection();
   }
 
