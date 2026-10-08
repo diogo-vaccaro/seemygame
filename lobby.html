@@ -156,6 +156,47 @@
         </button>
       </form>
     </div>
+
+    <!-- Painel de Diretório da Comunidade / Salas ao Vivo -->
+    <div class="lobby-directory-card" id="lobby-directory-card">
+      <div class="directory-header">
+        <div class="directory-title-wrap">
+          <h2 class="directory-title">
+            <span class="live-pulse-dot" aria-hidden="true"></span>
+            Salas da Comunidade
+          </h2>
+          <span class="directory-badge" id="directory-room-count">0 ativas</span>
+        </div>
+        <button type="button" id="directory-refresh-btn" class="directory-refresh-btn" title="Atualizar lista de salas">
+          <span class="refresh-icon">🔄</span> Atualizar
+        </button>
+      </div>
+
+      <p class="directory-subtitle">
+        Descubra partidas ao vivo abertas por outros jogadores com conexão direta P2P.
+      </p>
+
+      <div class="directory-toolbar">
+        <div class="directory-search-box">
+          <span class="search-icon" aria-hidden="true">🔍</span>
+          <input type="text" id="directory-search-input" class="directory-search-input" placeholder="Buscar por jogo ou sala..." autocomplete="off">
+        </div>
+
+        <div class="directory-filters" role="tablist" aria-label="Filtros de salas">
+          <button type="button" class="dir-filter-pill active" data-filter="all">Todas</button>
+          <button type="button" class="dir-filter-pill" data-filter="public">🟢 Abertas</button>
+          <button type="button" class="dir-filter-pill" data-filter="private">🔒 Com PIN</button>
+          <button type="button" class="dir-filter-pill" data-filter="player2">🎮 Vaga Player 2</button>
+        </div>
+      </div>
+
+      <div id="directory-rooms-list" class="directory-rooms-list" role="region" aria-live="polite">
+        <div class="directory-loading">
+          <div class="directory-spinner"></div>
+          <span>Buscando salas ao vivo...</span>
+        </div>
+      </div>
+    </div>
   </main>
 
   <div id="toast-container" role="status" aria-live="polite" aria-atomic="true"></div>

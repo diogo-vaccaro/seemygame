@@ -17,13 +17,19 @@
   padding: 8px 0;
 }.lobby-center-container {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
+  flex-wrap: wrap;
+  gap: 24px;
   flex: 1;
-  padding: 20px 0;
+  padding: 24px 0;
+  width: 100%;
+  max-width: 1080px;
+  margin: 0 auto;
 }.lobby-card {
   width: 100%;
-  max-width: 440px;
+  max-width: 420px;
+  flex: 1 1 360px;
   background: var(--dune-surface);
   border: 1px solid var(--dune-border);
   border-radius: 18px;
@@ -147,4 +153,362 @@
   align-items: center;
   gap: 6px;
 }
+
+/* ==========================================================================
+   DIRETÓRIO DA COMUNIDADE / SALAS AO VIVO
+   ========================================================================== */
+.lobby-directory-card {
+  width: 100%;
+  max-width: 580px;
+  flex: 1 1 440px;
+  min-height: 480px;
+  background: var(--dune-surface);
+  border: 1px solid var(--dune-border);
+  border-radius: 18px;
+  padding: 24px;
+  box-shadow: var(--dune-shadow-card);
+  display: flex;
+  flex-direction: column;
+}
+
+.directory-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.directory-title-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.directory-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--text-main);
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.live-pulse-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background-color: #10b981;
+  box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  animation: pulse-green 2s infinite;
+  display: inline-block;
+}
+
+@keyframes pulse-green {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 8px rgba(16, 185, 129, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0);
+  }
+}
+
+.directory-badge {
+  font-size: 0.72rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  background: rgba(224, 168, 56, 0.15);
+  color: var(--dune-gold, #e0a838);
+  border: 1px solid rgba(224, 168, 56, 0.35);
+  border-radius: 999px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.directory-refresh-btn {
+  background: var(--dune-surface-input);
+  border: 1px solid var(--dune-border);
+  color: var(--dune-text-muted);
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  transition: all 0.2s ease;
+}
+
+.directory-refresh-btn:hover {
+  background: var(--dune-surface-hover, rgba(255, 255, 255, 0.08));
+  color: var(--text-main);
+  border-color: var(--dune-gold, #e0a838);
+}
+
+.directory-subtitle {
+  color: var(--dune-text-muted);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  margin: 0 0 16px 0;
+}
+
+.directory-toolbar {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.directory-search-box {
+  position: relative;
+  width: 100%;
+}
+
+.directory-search-box .search-icon {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 0.85rem;
+  opacity: 0.6;
+  pointer-events: none;
+}
+
+.directory-search-input {
+  width: 100%;
+  background: var(--dune-surface-input);
+  border: 1px solid var(--dune-border);
+  border-radius: 9px;
+  padding: 8px 12px 8px 34px;
+  font-size: 0.88rem;
+  color: var(--text-main);
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.directory-search-input:focus-visible {
+  border-color: var(--dune-gold, #e0a838);
+}
+
+.directory-filters {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 4px;
+}
+
+.dir-filter-pill {
+  background: transparent;
+  border: 1px solid var(--dune-border);
+  color: var(--dune-text-muted);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.dir-filter-pill:hover {
+  border-color: var(--dune-gold, #e0a838);
+  color: var(--text-main);
+}
+
+.dir-filter-pill.active {
+  background: var(--dune-gold, #e0a838);
+  border-color: var(--dune-gold, #e0a838);
+  color: #101216;
+  font-weight: 700;
+}
+
+.directory-rooms-list {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  overflow-y: auto;
+  max-height: 380px;
+  padding-right: 4px;
+}
+
+.dir-room-card {
+  background: var(--dune-surface-input);
+  border: 1px solid var(--dune-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.dir-room-card:hover {
+  border-color: rgba(224, 168, 56, 0.4);
+  transform: translateY(-1px);
+}
+
+.dir-room-main {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+
+.dir-room-title-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dir-room-flag {
+  font-size: 1.15rem;
+  line-height: 1;
+}
+
+.dir-room-name {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 190px;
+}
+
+.dir-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.dir-badge-public {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.dir-badge-private {
+  background: rgba(168, 85, 247, 0.15);
+  color: #c084fc;
+  border: 1px solid rgba(168, 85, 247, 0.3);
+}
+
+.dir-badge-p2 {
+  background: rgba(59, 130, 246, 0.15);
+  color: #60a5fa;
+  border: 1px solid rgba(59, 130, 246, 0.3);
+}
+
+.dir-room-meta {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 0.78rem;
+  color: var(--dune-text-muted);
+  flex-wrap: wrap;
+}
+
+.dir-room-game {
+  font-weight: 600;
+  color: var(--dune-gold, #e0a838);
+}
+
+.dir-room-location {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.dir-room-action {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.dir-members-count {
+  font-size: 0.76rem;
+  font-weight: 700;
+  color: var(--dune-text-muted);
+}
+
+.dir-join-btn {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  border-radius: 8px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.dir-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 36px 16px;
+  color: var(--dune-text-muted);
+}
+
+.dir-empty-icon {
+  font-size: 2.2rem;
+  margin-bottom: 8px;
+  opacity: 0.7;
+}
+
+.dir-empty-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text-main);
+  margin: 0 0 6px 0;
+}
+
+.dir-empty-desc {
+  font-size: 0.82rem;
+  line-height: 1.45;
+  max-width: 340px;
+  margin: 0;
+}
+
+.directory-loading {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 16px;
+  color: var(--dune-text-muted);
+  font-size: 0.88rem;
+}
+
+.directory-spinner {
+  width: 24px;
+  height: 24px;
+  border: 3px solid rgba(224, 168, 56, 0.2);
+  border-top-color: var(--dune-gold, #e0a838);
+  border-radius: 50%;
+  animation: dir-spin 0.8s linear infinite;
+}
+
+@keyframes dir-spin {
+  to { transform: rotate(360deg); }
+}
+
 

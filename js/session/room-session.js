@@ -68,6 +68,7 @@ import { streamerMode } from '../room/streamer-mode.js';
 import { roomToolsController } from '../room/room-tools.js';
 import { registerSessionFeatures } from '../plugins/session-composition.js';
 import { createCoopController } from '../coop/controller.js';
+import { RoomPublisher } from '../directory/room-publisher.js';
 
 /** Creates a runtime whose state and resource lifetime belong to one session. */
 export function createRoomSession(options = {}) {
@@ -100,7 +101,8 @@ const roomState = {
   remoteStreams: new Map(),
   screenCalls: new Map(),
   pendingVoiceChannelId: null,
-  messageHandlers: null
+  messageHandlers: null,
+  publisher: null
 };
 
 function getRoomInfoFromUrl() {
@@ -229,9 +231,42 @@ async function setupRoomSession(peerId, session = roomState.session) {
     maxDirectViewers: 8
   });
 
+  if (isMaster) {
+    let publish = false;
+    let game = 'Geral';
+    let player2Slot = false;
+    try {
+      publish = localStorage.getItem('seemygame_dir_publish_' + rm.roomId) === 'true';
+      game = localStorage.getItem('seemygame_dir_game_' + rm.roomId) || 'Geral';
+      player2Slot = localStorage.getItem('seemygame_dir_p2_' + rm.roomId) === 'true';
+    } catch (_) {}
+    if (publish) {
+      roomState.publisher = new RoomPublisher();
+      session?.registerCleanup(() => {
+        roomState.publisher?.dispose();
+        roomState.publisher = null;
+      });
+      roomState.publisher.start({
+        roomId: rm.roomId,
+        title: rm.roomId,
+        game,
+        isPrivate: Boolean(rm.roomPin),
+        hasPlayer2Slot: player2Slot,
+        memberCount: 1,
+        maxMembers: 8
+      });
+    }
+  }
+
   rm.on('membersUpdated', () => {
     if (!rm.isMaster && rm.isPeerAuthorized(rm.masterPeerId)) {
       roomState.identityUI?.update('ready');
+    }
+    if (roomState.publisher?.isActive) {
+      roomState.publisher.updateMetrics({
+        memberCount: (rm.members?.size || 0) + 1,
+        isPrivate: Boolean(rm.roomPin)
+      });
     }
     if (!roomState.localStream || !roomState.peer) return;
     for (const [memberId, connection] of rm.meshConnections) {
@@ -1004,7 +1039,7 @@ async function initRoomApp(options = {}) {
   bindRoomSettings(session, {
     getRoomManager: () => roomState.roomManager,
     showToast,
-    applySettings: ({ roomId, roomPin, url }) => {
+    applySettings: ({ roomId, roomPin, url, directoryPublish, game, player2Slot }) => {
       const rm = roomState.roomManager;
       if (!rm?.isMaster) return;
       if (roomId !== rm.roomId) {
@@ -1016,6 +1051,29 @@ async function initRoomApp(options = {}) {
       roomState.currentPin = roomPin;
       window.history.replaceState(null, '', url);
       roomState.identityUI?.update('ready');
+
+      if (directoryPublish) {
+        if (!roomState.publisher) {
+          roomState.publisher = new RoomPublisher();
+          session?.registerCleanup(() => {
+            roomState.publisher?.dispose();
+            roomState.publisher = null;
+          });
+        }
+        roomState.publisher.start({
+          roomId: rm.roomId,
+          title: rm.roomId,
+          game: game || 'Geral',
+          isPrivate: Boolean(roomPin),
+          hasPlayer2Slot: Boolean(player2Slot),
+          memberCount: (rm.members?.size || 0) + 1,
+          maxMembers: 8
+        });
+      } else if (roomState.publisher) {
+        roomState.publisher.stop();
+        roomState.publisher = null;
+      }
+
       showToast('Ajustes da sala atualizados. O convite já usa o novo PIN.', 'success');
     }
   });
@@ -1154,6 +1212,10 @@ async function initRoomApp(options = {}) {
       }
       if (roomState.peer && !roomState.peer.destroyed) {
         try { roomState.peer.destroy(); } catch (e) {}
+      }
+      if (roomState.publisher) {
+        try { roomState.publisher.dispose(); } catch (_) {}
+        roomState.publisher = null;
       }
       roomState.peer = null;
       roomState.roomManager = null;
