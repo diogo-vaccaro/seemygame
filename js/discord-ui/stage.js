@@ -200,6 +200,7 @@ updateRoomPresence(members) {
     }
 
     if (roomParticipantsList && Array.isArray(members)) {
+      roomParticipantsList.querySelectorAll('.participant-volume-wrapper').forEach(wrapper => wrapper.cleanup?.());
       roomParticipantsList.innerHTML = '';
       members.filter(m => !this.elements.roomChannels || !m.voiceChannelId).forEach((m) => {
         const initial = (m.name || 'A').charAt(0).toUpperCase();
@@ -277,6 +278,7 @@ updateRoomPresence(members) {
     }
 
     if (voiceStageGrid && Array.isArray(members)) {
+      voiceStageGrid.querySelectorAll('.participant-volume-wrapper').forEach(wrapper => wrapper.cleanup?.());
       voiceStageGrid.innerHTML = '';
       const stageMembers = this.elements.roomChannels ? members.filter(m => this.roomManager.voiceChannelId && m.voiceChannelId === this.roomManager.voiceChannelId) : members;
       if (this.elements.roomChannels && !this.roomManager.voiceChannelId) {

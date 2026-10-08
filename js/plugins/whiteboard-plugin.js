@@ -120,7 +120,7 @@ export class WhiteboardPlugin extends BasePlugin {
   }
 
   destroy() {
-    super.destroy();
+    const cleanup = super.destroy();
     // Limpa referências ativas no manager para liberar GC
     this.manager.onElementCreated = null;
     this.manager.onElementUpdated = null;
@@ -128,7 +128,7 @@ export class WhiteboardPlugin extends BasePlugin {
     this.manager.onBoardCleared = null;
     this.manager.onCursorMoved = null;
     this.manager.onToolChanged = null;
-    if (this.ownsManager) this.manager.dispose?.();
+    return Promise.allSettled([cleanup, this.ownsManager ? this.manager.dispose?.() : undefined]);
   }
 }
 

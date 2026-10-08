@@ -4,6 +4,7 @@ import { VAD_THRESHOLD, VAD_SILENCE_DELAY_MS, MAX_VOICE_PARTICIPANTS } from './s
 /** VoiceManager: vad. State and lifetime remain owned by the composed engine. */
 export const withVoiceManagerVad = Base => class extends Base {
 initLocalVAD() {
+    this.stopLocalVAD();
     if (!this.localStream || this.localStream.getAudioTracks().length === 0) return;
 
     try {
@@ -64,16 +65,21 @@ stopLocalVAD() {
         this.localVad.source = null;
       }
     } catch (e) {}
+    try { this.localVad.analyser?.disconnect(); } catch (_) {}
+    this.localVad.analyser = null;
     this.localVad.isSpeaking = false;
   }
 
 initRemoteVAD(participant) {
+    this.stopRemoteVAD(participant);
     if (!participant.stream || participant.stream.getAudioTracks().length === 0) return;
 
     try {
       const ctx = this.audioContextProvider();
       const source = ctx.createMediaStreamSource(participant.stream);
       const analyser = ctx.createAnalyser();
+      participant.vadSource = source;
+      participant.vadAnalyser = analyser;
       analyser.fftSize = 64;
       source.connect(analyser);
 
@@ -101,7 +107,17 @@ initRemoteVAD(participant) {
         }
       }, 80);
     } catch (err) {
+      this.stopRemoteVAD(participant);
       console.warn(`[Remote VAD] Falha para ${participant.peerId}:`, err);
     }
+  }
+
+stopRemoteVAD(participant) {
+    if (participant.vadInterval != null) clearInterval(participant.vadInterval);
+    participant.vadInterval = null;
+    for (const node of [participant.vadSource, participant.vadAnalyser]) {
+      try { node?.disconnect(); } catch (_) {}
+    }
+    participant.vadSource = participant.vadAnalyser = null;
   }
 };

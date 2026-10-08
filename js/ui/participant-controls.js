@@ -47,6 +47,7 @@ export function createParticipantVolumePopover({ peerId, name = 'Amigo', voiceMa
   slider.min = '0';
   slider.max = '200';
   slider.step = '1';
+  slider.setAttribute('aria-label', `Volume de ${name}`);
   slider.value = String(currentVol);
   slider.className = 'participant-volume-slider';
   slider.disabled = isMuted;
@@ -96,6 +97,7 @@ export function createParticipantVolumePopover({ peerId, name = 'Amigo', voiceMa
       if (p !== popover) p.style.display = 'none';
     });
     popover.style.display = isVisible ? 'none' : 'flex';
+    updateUI(voiceManager.getUserVolume?.(peerId) ?? Number(slider.value), voiceManager.isUserLocallyMuted?.(peerId) ?? false);
   });
 
   slider.addEventListener('input', (e) => {
@@ -149,6 +151,14 @@ export function createParticipantVolumePopover({ peerId, name = 'Amigo', voiceMa
     document.removeEventListener('click', onDocClick);
     document.removeEventListener('keydown', onDocKeydown);
   };
+  if (voiceManager.on && voiceManager.off) {
+    const sync = data => {
+      if (data.peerId === peerId) updateUI(voiceManager.getUserVolume(peerId), voiceManager.isUserLocallyMuted(peerId));
+    };
+    voiceManager.on('userVolumeChange', sync); voiceManager.on('userMuteChange', sync);
+    const cleanup = wrapper.cleanup;
+    wrapper.cleanup = () => { cleanup(); voiceManager.off('userVolumeChange', sync); voiceManager.off('userMuteChange', sync); };
+  }
 
   return wrapper;
 }

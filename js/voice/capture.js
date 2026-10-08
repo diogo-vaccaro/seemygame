@@ -175,16 +175,15 @@ leaveVoice() {
       if (p.sourceNode) {
         try { p.sourceNode.disconnect(); } catch (e) {}
       }
-      if (p.audioElem) {
+      for (const element of [p.audioElem, p.sourceAudioElem]) {
+        if (!element) continue;
         try {
-          p.audioElem.pause();
-          p.audioElem.srcObject = null;
-          p.audioElem.remove();
+          element.pause();
+          element.srcObject = null;
+          element.remove();
         } catch (e) {}
       }
-      if (p.vadInterval) {
-        clearInterval(p.vadInterval);
-      }
+      this.stopRemoteVAD(p);
     }
 
     this.participants.clear();

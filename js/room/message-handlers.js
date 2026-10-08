@@ -19,6 +19,11 @@ handleRoomMessage(senderPeerId, message, conn) {
     // this check at the protocol boundary so a forged peerId never reaches the
     // membership or media layers.
     if (conn?.peer && conn.peer !== senderPeerId) return true;
+    if (['ROOM_PIN_REQUIRED', 'ROOM_PIN_ACCEPTED', 'ROOM_KEY_REQUIRED', 'ROOM_JOIN_REJECTED'].includes(message.type)) {
+      const knownCoordinator = senderPeerId === this.masterPeerId && conn &&
+        (this.pendingConnections.get(senderPeerId) === conn || this.meshConnections.get(senderPeerId) === conn);
+      if (!knownCoordinator) return true;
+    }
 
     const isJoinOrAuthMessage = [
       'ROOM_JOIN_REQUEST',
@@ -236,7 +241,17 @@ handleRoomMessage(senderPeerId, message, conn) {
         if (message.voiceChannels && this.applyVoiceChannels(message.voiceChannels, message.voiceChannelsRevision,
           { resetRevision: this.voiceCatalogConnection !== conn })) this.voiceCatalogConnection = conn;
         if (Array.isArray(message.members)) {
+          // A full coordinator snapshot replaces stale membership after reconnect.
+          // Validate the roster before revoking anyone; never apply a partial list.
+          if (message.members.length > MAX_ROOM_MEMBERS ||
+              !message.members.every(m => m && isValidPeerId(m.peerId)) ||
+              new Set(message.members.map(m => m.peerId)).size !== message.members.length) return true;
+          const present = new Set(message.members.map(m => m.peerId));
+          for (const id of [...this.members.keys()]) {
+            if (id !== this.myPeerId && id !== this.masterPeerId && !present.has(id)) this.removeMember(id);
+          }
           const newlyActiveStreamers = [];
+          const stoppedStreamers = [];
           message.members.forEach((m) => {
             if (m && isValidPeerId(m.peerId) && m.peerId !== this.myPeerId) {
               const prev = this.members.get(m.peerId);
@@ -258,12 +273,14 @@ handleRoomMessage(senderPeerId, message, conn) {
               if (updatedMember.isStreaming && (!prev || !prev.isStreaming)) {
                 newlyActiveStreamers.push(updatedMember);
               }
+              if (prev?.isStreaming && !updatedMember.isStreaming) stoppedStreamers.push(updatedMember);
             }
           });
           this.emit('membersUpdated', this.getMembersList());
           newlyActiveStreamers.forEach((m) => {
             this.emit('streamPublished', { peerId: m.peerId, details: m.streamDetails, member: m });
           });
+          stoppedStreamers.forEach(member => this.emit('streamUnpublished', { peerId: member.peerId, member }));
           this.notifyState();
         }
         return true;

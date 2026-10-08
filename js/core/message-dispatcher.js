@@ -51,7 +51,13 @@ export class MessageDispatcher {
     list.push(entry);
     list.sort((a, b) => b.priority - a.priority);
 
-    return () => this.unregister(type, handler);
+    return () => {
+      const current = this._handlers.get(type);
+      const index = current?.indexOf(entry) ?? -1;
+      if (index === -1) return;
+      current.splice(index, 1);
+      if (!current.length) this._handlers.delete(type);
+    };
   }
 
   /**
@@ -138,7 +144,7 @@ export class MessageDispatcher {
     let errorCount = 0;
 
     if (list && list.length > 0) {
-      for (const entry of list) {
+      for (const entry of [...list]) {
         try {
           const res = entry.handler(data, sourceConn);
           if (res && typeof res.catch === 'function') {

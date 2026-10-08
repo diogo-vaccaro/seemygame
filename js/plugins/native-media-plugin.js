@@ -96,10 +96,15 @@ export class NativeMediaPlugin extends BasePlugin {
     this.negotiating.add(conn.peer);
     const sender = { sessionId, negotiationId: crypto.randomUUID() };
     this.outgoing.set(conn.peer, sender);
-    if (!sendSessionMessage(this.session, conn, { type: 'START_DIRECT_STREAM', ...sender, quality: provider.requestedSettings, hasAudio: Boolean(provider.session.audioRtpPort || provider.session.audio_rtp_port) })) {
-      this.negotiating.delete(conn.peer); this.outgoing.delete(conn.peer);
+    let sent = false;
+    try {
+      sent = sendSessionMessage(this.session, conn, { type: 'START_DIRECT_STREAM', ...sender, quality: provider.requestedSettings, hasAudio: Boolean(provider.session.audioRtpPort || provider.session.audio_rtp_port) });
+      return sent;
+    } finally {
+      if (!sent && this.outgoing.get(conn.peer) === sender) {
+        this.negotiating.delete(conn.peer); this.outgoing.delete(conn.peer); this.connections.delete(conn.peer);
+      }
     }
-    return true;
   }
   async answer(data, conn) {
     const sessionId = this.getProvider?.()?.session?.sessionId;
@@ -111,13 +116,20 @@ export class NativeMediaPlugin extends BasePlugin {
       if (this.session.isDisposed || this.getProvider?.()?.session?.sessionId !== sessionId || this.outgoing.get(conn.peer) !== sender) {
         await closeNativeViewerPeer(sessionId, conn.peer, sender.negotiationId); return;
       }
-      sendSessionMessage(this.session, conn, { type: 'DIRECT_STREAM_ANSWER', ...sender, sdp: answer.sdp });
+      if (!sendSessionMessage(this.session, conn, { type: 'DIRECT_STREAM_ANSWER', ...sender, sdp: answer.sdp })) {
+        this.senders.delete(conn.peer); this.outgoing.delete(conn.peer); this.negotiating.delete(conn.peer); this.connections?.delete(conn.peer);
+        await closeNativeViewerPeer(sessionId, conn.peer, sender.negotiationId);
+        return;
+      }
       this.session.services?.statsScope?.startStatsMonitor(`native-send-${conn.peer}`, { getStats: () => getNativeStreamStats(sessionId, conn.peer) }, true, null, { cardId: 'local-me', context: () => {
         const provider = this.getProvider?.(), codec = provider?.session?.videoCodec;
         return { requestedCodec: codec, requestedFps: provider?.requestedSettings?.fps, encoderImplementation: codec === 'av1' ? 'svtav1enc' : codec === 'hevc' ? 'mfh265enc' : provider?.session?.h264Encoder || null };
       } });
     } catch (error) {
-      if (this.outgoing.get(conn.peer) === sender) this.senders.delete(conn.peer);
+      if (this.outgoing.get(conn.peer) === sender) {
+        this.senders.delete(conn.peer); this.outgoing.delete(conn.peer); this.negotiating.delete(conn.peer); this.connections?.delete(conn.peer);
+      }
+      try { await closeNativeViewerPeer(sessionId, conn.peer, sender.negotiationId); } catch (_) { /* Preserve the negotiation error. */ }
       throw error;
     } finally {
       if (this.outgoing.get(conn.peer) === sender) this.negotiating.delete(conn.peer);
@@ -130,24 +142,24 @@ export class NativeMediaPlugin extends BasePlugin {
     const pc = new RTCPeerConnection(getPeerConfig().config);
     const stream = new MediaStream();
     this.receivers.set(conn.peer, { pc, stream, pending: [], sessionId: data.sessionId, negotiationId: data.negotiationId });
-    pc.addTransceiver('video', { direction: 'recvonly' });
-    if (data.hasAudio) pc.addTransceiver('audio', { direction: 'recvonly' });
-    applyTransceiverOptimizations(pc, 'ultra-low', 'auto');
-    pc.ontrack = event => {
-      if (this.session.isDisposed || this.receivers.get(conn.peer)?.pc !== pc) return;
-      if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
-      addOrUpdateVideoCard({ session: this.session, audioScope: this.session.audioScope, peerId: conn.peer, stream, label: `Ao Vivo: ${conn.peer.slice(0, 8)}`, onClipClick: this.onClip, onCoopClick: this.onCoop });
-      this.context.eventBus.emit('stream:received', { hostId: conn.peer, stream });
-      (this.session.services?.statsScope?.startStatsMonitor || startStatsMonitor)(conn.peer, pc, false, null, { context: () => ({ requestedFps: Number.isFinite(data.quality?.fps) && data.quality.fps > 0 && data.quality.fps <= 120 ? data.quality.fps : null }) });
-    };
-    pc.onicecandidate = event => {
-      if (this.receivers.get(conn.peer)?.pc !== pc || this.session.isDisposed) return;
-      if (event.candidate) sendSessionMessage(this.session, conn, { type: 'DIRECT_STREAM_ICE_CANDIDATE', sessionId: data.sessionId, negotiationId: data.negotiationId, target: 'sender', candidate: event.candidate.candidate, mlineIndex: event.candidate.sdpMLineIndex ?? 0 });
-    };
-    pc.onconnectionstatechange = () => {
-      if (pc.connectionState === 'failed') this.closeReceiver(conn.peer, pc);
-    };
     try {
+      pc.addTransceiver('video', { direction: 'recvonly' });
+      if (data.hasAudio) pc.addTransceiver('audio', { direction: 'recvonly' });
+      applyTransceiverOptimizations(pc, 'ultra-low', 'auto');
+      pc.ontrack = event => {
+        if (this.session.isDisposed || this.receivers.get(conn.peer)?.pc !== pc) return;
+        if (!stream.getTracks().includes(event.track)) stream.addTrack(event.track);
+        addOrUpdateVideoCard({ session: this.session, audioScope: this.session.audioScope, peerId: conn.peer, stream, label: `Ao Vivo: ${conn.peer.slice(0, 8)}`, onClipClick: this.onClip, onCoopClick: this.onCoop });
+        this.context.eventBus.emit('stream:received', { hostId: conn.peer, stream });
+        (this.session.services?.statsScope?.startStatsMonitor || startStatsMonitor)(conn.peer, pc, false, null, { context: () => ({ requestedFps: Number.isFinite(data.quality?.fps) && data.quality.fps > 0 && data.quality.fps <= 120 ? data.quality.fps : null }) });
+      };
+      pc.onicecandidate = event => {
+        if (this.receivers.get(conn.peer)?.pc !== pc || this.session.isDisposed) return;
+        if (event.candidate) sendSessionMessage(this.session, conn, { type: 'DIRECT_STREAM_ICE_CANDIDATE', sessionId: data.sessionId, negotiationId: data.negotiationId, target: 'sender', candidate: event.candidate.candidate, mlineIndex: event.candidate.sdpMLineIndex ?? 0 });
+      };
+      pc.onconnectionstatechange = () => {
+        if (pc.connectionState === 'failed') this.closeReceiver(conn.peer, pc);
+      };
       const offer = await pc.createOffer();
       if (this.session.isDisposed || this.receivers.get(conn.peer)?.pc !== pc) return;
       await pc.setLocalDescription(offer);
@@ -173,7 +185,7 @@ export class NativeMediaPlugin extends BasePlugin {
   }
   destroy() {
     for (const id of [...this.receivers.keys()]) this.closeReceiver(id);
-    super.destroy();
-    return this.stopSending();
+    const cleanup = super.destroy();
+    return Promise.allSettled([cleanup, this.stopSending()]);
   }
 }

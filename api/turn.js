@@ -75,6 +75,8 @@ function hasValidAccessToken(req) {
  */
 
 export default async function handler(req, res) {
+  // Never let shared HTTP caches bypass origin or token checks on credentials.
+  res.setHeader('Cache-Control', 'private, no-store');
   const origin = getRequestOrigin(req);
   const allowedOrigins = getAllowedOrigins();
   const production = process.env.NODE_ENV === 'production';
@@ -103,13 +105,15 @@ export default async function handler(req, res) {
 
   const meteredDomain = process.env.METERED_DOMAIN;
   const meteredApiKey = process.env.METERED_API_KEY;
+  const hasPrivateCredentials = Boolean((meteredDomain && meteredApiKey) || process.env.TURN_SERVERS_JSON ||
+    (process.env.TURN_USERNAME && (process.env.TURN_PASSWORD || process.env.TURN_CREDENTIAL)));
+  if (production && hasPrivateCredentials && !hasValidAccessToken(req)) {
+    res.setHeader('WWW-Authenticate', 'Bearer');
+    return res.status(401).json({ error: 'TURN authentication required' });
+  }
 
   // 1. Se credenciais privadas do provedor (Metered Video) estiverem configuradas nas variáveis de ambiente:
   if (meteredDomain && meteredApiKey) {
-    if (production && !hasValidAccessToken(req)) {
-      res.setHeader('WWW-Authenticate', 'Bearer');
-      return res.status(401).json({ error: 'TURN authentication required' });
-    }
     let timeoutId = null;
     try {
       const controller = new AbortController();
@@ -121,7 +125,6 @@ export default async function handler(req, res) {
       if (response.ok) {
         const iceServers = await response.json();
         if (Array.isArray(iceServers) && iceServers.length > 0) {
-          res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
           return res.status(200).json({ iceServers, source: 'metered-private' });
         }
       }
@@ -137,7 +140,6 @@ export default async function handler(req, res) {
     try {
       const customServers = JSON.parse(process.env.TURN_SERVERS_JSON);
       if (Array.isArray(customServers) && customServers.length > 0) {
-        res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
         return res.status(200).json({ iceServers: customServers, source: 'custom-static-credentials' });
       }
     } catch (_) {}
@@ -156,7 +158,6 @@ export default async function handler(req, res) {
       { urls: `turn:${turnHost}:443`, username: turnUsername, credential: turnPassword },
       { urls: `turns:${turnHost}:443?transport=tcp`, username: turnUsername, credential: turnPassword }
     ];
-    res.setHeader('Cache-Control', 's-maxage=300, stale-while-revalidate');
     return res.status(200).json({ iceServers, source: 'metered-static-credentials' });
   }
 
@@ -183,6 +184,8 @@ export default async function handler(req, res) {
     }
   ];
 
-  res.setHeader('Cache-Control', 's-maxage=3600, stale-while-revalidate');
-  return res.status(200).json({ iceServers: defaultIceServers, source: 'metered-openrelay-fallback' });
+  return res.status(200).json({
+    iceServers: production ? defaultIceServers.filter(server => server.urls.startsWith('stun:')) : defaultIceServers,
+    source: production ? 'public-stun-fallback' : 'metered-openrelay-fallback'
+  });
 }

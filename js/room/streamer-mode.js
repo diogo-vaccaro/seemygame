@@ -15,9 +15,13 @@ export class StreamerModeController {
 
     this.onKeydown = this.onKeydown.bind(this);
     this._observer = null;
+    this._toggleBtn = null;
+    this._onToggle = () => this.toggle();
+    this.maskedInputs = new Map();
   }
 
   init(elements = {}) {
+    this._toggleBtn?.removeEventListener('click', this._onToggle);
     this.elements = { ...this.elements, ...elements };
 
     // Restaurar preferência do localStorage
@@ -33,7 +37,8 @@ export class StreamerModeController {
     }
 
     if (this.elements.toggleBtn) {
-      this.elements.toggleBtn.addEventListener('click', () => this.toggle());
+      this._toggleBtn = this.elements.toggleBtn;
+      this._toggleBtn.addEventListener('click', this._onToggle);
     }
 
     this.apply();
@@ -42,6 +47,11 @@ export class StreamerModeController {
 
   destroy() {
     this._stopObserver();
+    this._toggleBtn?.removeEventListener('click', this._onToggle);
+    this._toggleBtn = null;
+    const enabled = this.enabled;
+    this.enabled = false; this.apply(); this.enabled = enabled;
+    this.elements = {}; this.originalBadgeText = null;
     if (typeof window !== 'undefined') {
       window.removeEventListener('keydown', this.onKeydown);
     }
@@ -122,6 +132,7 @@ export class StreamerModeController {
       } else if (this.originalBadgeText !== null) {
         badge.textContent = this.originalBadgeText;
         badge.classList.remove('badge-streamer-protected');
+        this.originalBadgeText = null;
       }
     }
 
@@ -146,6 +157,19 @@ export class StreamerModeController {
         delete codeDisplay.dataset.realValue;
       }
     }
+    if (this.enabled) {
+      document.querySelectorAll('.room-code, .room-pin, #share-room-code-display, [data-streamer-mask]').forEach(el => {
+        if (el.tagName === 'INPUT' && el.value !== '••••••••') {
+          this.maskedInputs.set(el, el.value); el.dataset.realValue = el.value; el.value = '••••••••';
+        }
+      });
+    } else {
+      for (const [el, value] of this.maskedInputs) {
+        if (el.value === '••••••••') el.value = value;
+        delete el.dataset.realValue;
+      }
+      this.maskedInputs.clear();
+    }
 
     // QR code blur
     const qrWrapper = this.elements.qrWrapper || document.querySelector('.qr-code-wrapper');
@@ -163,15 +187,21 @@ export class StreamerModeController {
   _startObserver() {
     if (this._observer || typeof MutationObserver === 'undefined' || typeof document === 'undefined') return;
     this._observer = new MutationObserver(() => {
-      if (this.enabled) {
+      if (this.enabled && typeof document !== 'undefined') {
         document.querySelectorAll('.room-code, .room-pin, #share-room-code-display, [data-streamer-mask]').forEach(el => {
           if (el.tagName === 'INPUT') {
-            if (el.value !== '••••••••' && !el.dataset.realValue) {
+            if (el.value !== '••••••••') {
+              this.maskedInputs.set(el, el.value);
               el.dataset.realValue = el.value;
               el.value = '••••••••';
             }
           }
         });
+        const badge = this.elements.roomHeaderBadge || document.getElementById('room-header-badge');
+        if (badge && badge.textContent !== '🛡️ Sala Oculta (Modo Streamer)') {
+          this.originalBadgeText = badge.textContent;
+          badge.textContent = '🛡️ Sala Oculta (Modo Streamer)';
+        }
         if (document.title !== 'SeeMyGame - Em Transmissão') {
           if (!this.originalTitle) this.originalTitle = document.title;
           document.title = 'SeeMyGame - Em Transmissão';

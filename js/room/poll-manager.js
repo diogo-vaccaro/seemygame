@@ -51,19 +51,16 @@ export class PollManager {
       throw new Error('A enquete precisa de uma pergunta e pelo menos duas opções.');
     }
 
-    if (this.currentPoll && this.currentPoll.isActive) {
-      this.endPoll(this.currentPoll.id, false);
-    }
-
     const cleanOptions = options
       .map(opt => (typeof opt === 'string' ? opt.trim() : ''))
       .filter(Boolean);
 
-    if (cleanOptions.length < 2) {
+    if (cleanOptions.length < 2 || cleanOptions.length > 10 || cleanQuestion.length > 500 || cleanOptions.some(text => text.length > 200)) {
       throw new Error('A enquete precisa de pelo menos 2 opções válidas.');
     }
 
-    const duration = Math.max(0, parseInt(durationSeconds, 10) || 0);
+    if (this.currentPoll && this.currentPoll.isActive) this.endPoll(this.currentPoll.id, false);
+    const duration = Math.min(86400, Math.max(0, parseInt(durationSeconds, 10) || 0));
     const now = Date.now();
     const expiresAt = duration > 0 ? now + duration * 1000 : null;
 
@@ -81,6 +78,7 @@ export class PollManager {
     };
 
     this.currentPoll = poll;
+    this.localPollId = poll.id;
 
     if (expiresAt) {
       this._scheduleTimer(expiresAt - now);
@@ -98,13 +96,14 @@ export class PollManager {
   }
 
   vote(pollId, optionIndex, voterId) {
-    if (!this.currentPoll || !this.currentPoll.isActive || this.currentPoll.id !== pollId) {
+    if (!this.currentPoll || !this.currentPoll.isActive || this.currentPoll.id !== pollId ||
+        (this.currentPoll.expiresAt && Date.now() >= this.currentPoll.expiresAt)) {
       return false;
     }
 
     const poll = this.currentPoll;
-    const idx = parseInt(optionIndex, 10);
-    if (Number.isNaN(idx) || idx < 0 || idx >= poll.options.length) {
+    const idx = Number(optionIndex);
+    if (!Number.isInteger(idx) || idx < 0 || idx >= poll.options.length) {
       return false;
     }
 
@@ -141,6 +140,7 @@ export class PollManager {
   endPoll(pollId = null, notify = true) {
     if (!this.currentPoll) return null;
     if (pollId && this.currentPoll.id !== pollId) return null;
+    if (!this.currentPoll.isActive) return this.getResults();
 
     this._clearTimer();
     this.currentPoll.isActive = false;
@@ -230,11 +230,11 @@ export class PollManager {
     return msg.trim();
   }
 
-  handleRemoteMessage(msg) {
+  handleRemoteMessage(msg, senderId = null) {
     if (!msg || typeof msg !== 'object') return;
 
     if (msg.type === 'POLL_SYNC_REQUEST') {
-      if (this.currentPoll && this.currentPoll.isActive && this.broadcast) {
+      if (this.currentPoll && this.currentPoll.isActive && this.broadcast && this.localPollId === this.currentPoll.id) {
         this.broadcast({
           type: 'POLL_SYNC',
           poll: this._serializePoll(this.currentPoll)
@@ -244,6 +244,17 @@ export class PollManager {
     }
 
     if ((msg.type === 'POLL_CREATE' || msg.type === 'POLL_SYNC') && msg.poll) {
+      const incoming = msg.poll;
+      if (typeof incoming.id !== 'string' || !incoming.id || incoming.id.length > 128 ||
+          typeof incoming.question !== 'string' || !incoming.question.trim() || incoming.question.length > 500 ||
+          !Array.isArray(incoming.options) || incoming.options.length < 2 || incoming.options.length > 10 ||
+          incoming.options.some(option => !option || typeof option.text !== 'string' || !option.text.trim() || option.text.length > 200 ||
+            (option.voterIds != null && (!Array.isArray(option.voterIds) || option.voterIds.length > 256 ||
+              option.voterIds.some(id => typeof id !== 'string' || !id || id.length > 128)))) ||
+          (incoming.expiresAt != null && (!Number.isFinite(incoming.expiresAt) || incoming.expiresAt - Date.now() > 86400000))) return;
+      if (senderId && incoming.creatorId !== senderId) return;
+      if (this.currentPoll?.id === incoming.id) return;
+      if (this.currentPoll && Number(incoming.createdAt) < Number(this.currentPoll.createdAt)) return;
       if (this.currentPoll && this.currentPoll.isActive) {
         this._clearTimer();
       }
@@ -259,7 +270,7 @@ export class PollManager {
       if (this.currentPoll.expiresAt && this.currentPoll.isActive) {
         const remaining = this.currentPoll.expiresAt - Date.now();
         if (remaining > 0) {
-          this._scheduleTimer(remaining);
+          this._scheduleTimer(remaining, false);
         } else {
           this.endPoll(this.currentPoll.id, false);
         }
@@ -268,9 +279,11 @@ export class PollManager {
       this.notify();
     } else if (msg.type === 'POLL_VOTE' && msg.pollId) {
       if (this.currentPoll && this.currentPoll.id === msg.pollId && this.currentPoll.isActive) {
-        const { optionIndex, voterId } = msg;
-        const idx = parseInt(optionIndex, 10);
-        if (!Number.isNaN(idx) && idx >= 0 && idx < this.currentPoll.options.length && voterId) {
+        const { optionIndex } = msg;
+        const voterId = senderId || msg.voterId;
+        const idx = Number(optionIndex);
+        if (this.currentPoll.expiresAt && Date.now() >= this.currentPoll.expiresAt) return;
+        if (Number.isInteger(idx) && idx >= 0 && idx < this.currentPoll.options.length && typeof voterId === 'string' && voterId.trim() && voterId.length <= 128) {
           if (!this.currentPoll.allowMultiple) {
             for (const opt of this.currentPoll.options) {
               opt.voterIds = opt.voterIds.filter(id => id !== voterId);
@@ -284,16 +297,16 @@ export class PollManager {
         }
       }
     } else if (msg.type === 'POLL_END' && msg.pollId) {
-      if (this.currentPoll && this.currentPoll.id === msg.pollId) {
+      if (this.currentPoll && this.currentPoll.id === msg.pollId && (!senderId || senderId === this.currentPoll.creatorId)) {
         this.endPoll(msg.pollId, false);
       }
     }
   }
 
-  _scheduleTimer(ms) {
+  _scheduleTimer(ms, announce = true) {
     this._clearTimer();
     this.timerId = setTimeout(() => {
-      this.endPoll(this.currentPoll?.id, true);
+      this.endPoll(this.currentPoll?.id, announce);
     }, ms);
   }
 
@@ -302,6 +315,13 @@ export class PollManager {
       clearTimeout(this.timerId);
       this.timerId = null;
     }
+  }
+
+  dispose() {
+    this._clearTimer();
+    this.currentPoll = null; this.localPollId = null;
+    this.broadcast = this.onChatAnnounce = null;
+    this.listeners.clear();
   }
 
   _serializePoll(poll) {

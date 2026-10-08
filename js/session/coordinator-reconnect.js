@@ -15,7 +15,12 @@ export function createCoordinatorReconnect(session, { roomManager, getConnection
     if (!isLive() || getConnection()?.open) return;
     attempts++;
     console.log(`[Room] Tentando reconectar ao Coordenador Master (${attempts}/${maxAttempts})...`);
-    const conn = connect();
+    let conn;
+    try { conn = connect(); }
+    catch (error) {
+      console.warn('[Room] Não foi possível abrir a tentativa de reconexão:', error);
+      schedule(); return;
+    }
     if (!conn) { schedule(); return; }
     pending = conn;
     const failed = () => {

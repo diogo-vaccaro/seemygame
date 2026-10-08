@@ -30,7 +30,7 @@ function waitForIceGatheringComplete(peerConnection) {
     });
 }
 
-function waitForFirstVideoFrame(stream, timeoutMs) {
+function waitForFirstVideoFrame(stream, timeoutMs, signal) {
     // A track pode ser criada a partir do SDP antes de qualquer pacote RTP
     // chegar. Um elemento de vídeo oculto confirma que houve decodificação.
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') {
@@ -64,6 +64,7 @@ function waitForFirstVideoFrame(stream, timeoutMs) {
         const cleanup = () => {
             if (timer) clearTimeout(timer);
             if (pollTimer) clearInterval(pollTimer);
+            signal?.removeEventListener('abort', onAbort);
             video.removeEventListener?.('loadeddata', onFrame);
             video.removeEventListener?.('canplay', onFrame);
             video.removeEventListener?.('playing', onFrame);
@@ -88,6 +89,7 @@ function waitForFirstVideoFrame(stream, timeoutMs) {
             error ? reject(error) : resolve();
         };
         const onFrame = () => finish();
+        const onAbort = () => finish(new Error('Ponte nativa cancelada antes do primeiro frame'));
 
         video.addEventListener?.('loadeddata', onFrame, { once: true });
         video.addEventListener?.('canplay', onFrame, { once: true });
@@ -106,6 +108,8 @@ function waitForFirstVideoFrame(stream, timeoutMs) {
         timer = setTimeout(() => {
             finish(new Error('A ponte nativa recebeu a trilha, mas não entregou o primeiro frame de vídeo'));
         }, Math.max(1, timeoutMs));
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) { onAbort(); return; }
 
         try {
             const playPromise = video.play?.();
@@ -117,7 +121,7 @@ function waitForFirstVideoFrame(stream, timeoutMs) {
     });
 }
 
-function waitForMediaTracks(stream, peerConnection, expectAudio = false) {
+function waitForMediaTracks(stream, peerConnection, expectAudio = false, signal) {
     const hasVideo = () => stream.getVideoTracks().length > 0;
     const hasAudio = () => !expectAudio || stream.getAudioTracks().length > 0;
     return new Promise((resolve, reject) => {
@@ -134,8 +138,10 @@ function waitForMediaTracks(stream, peerConnection, expectAudio = false) {
             if (timer) clearTimeout(timer);
             peerConnection.removeEventListener('track', onTrack);
             peerConnection.removeEventListener('connectionstatechange', onStateChange);
+            signal?.removeEventListener('abort', onAbort);
             error ? reject(error) : resolve(stream);
         };
+        const onAbort = () => finish(new Error('Ponte nativa cancelada durante a negociação'));
         const confirmFrame = () => {
             if (frameStarted || !hasVideo() || !hasAudio()) return;
             frameStarted = true;
@@ -144,7 +150,7 @@ function waitForMediaTracks(stream, peerConnection, expectAudio = false) {
                 timer = null;
             }
             const elapsed = Date.now() - startedAt;
-            framePromise = waitForFirstVideoFrame(stream, Math.max(1, TRACK_TIMEOUT_MS - elapsed));
+            framePromise = waitForFirstVideoFrame(stream, Math.max(1, TRACK_TIMEOUT_MS - elapsed), signal);
             framePromise.then(() => finish()).catch(finish);
         };
         const onTrack = () => {
@@ -166,6 +172,8 @@ function waitForMediaTracks(stream, peerConnection, expectAudio = false) {
         const startedAt = Date.now();
         peerConnection.addEventListener('track', onTrack);
         peerConnection.addEventListener('connectionstatechange', onStateChange);
+        signal?.addEventListener('abort', onAbort, { once: true });
+        if (signal?.aborted) { onAbort(); return; }
         confirmFrame();
     });
 }
@@ -187,16 +195,20 @@ export function createNativeWebRtcBridge({ target = globalThis } = {}) {
             let isRemoteDescriptionSet = false;
             let unsubscribe = () => {};
             let closed = false;
+            const cancellation = new AbortController();
+            const ensureOpen = () => { if (closed) throw new Error('Negociação da ponte nativa cancelada'); };
 
             let telemetryTimer = null;
             const close = async () => {
                 if (closed) return;
                 closed = true;
+                cancellation.abort();
                 if (telemetryTimer) clearInterval(telemetryTimer);
                 sessions.delete(sessionId);
                 logDiagnostic(`[JS] Fechando sessão de stream nativo ${sessionId}`);
                 try { await unsubscribe(); } catch (error) { /* idempotente */ }
                 try { peerConnection.close(); } catch (error) { /* idempotente */ }
+                stream.getTracks().forEach(track => { try { track.stop(); } catch (_) {} });
                 await closeNativeCapturePeer(sessionId).catch(() => {});
                 await stopNativeCapture(sessionId).catch(() => {});
             };
@@ -248,56 +260,67 @@ export function createNativeWebRtcBridge({ target = globalThis } = {}) {
                     candidate.candidate
                 ).catch(() => {});
             });
-            const hasNativeAudio = nativeState.audioRtpPort != null || nativeState.audio_rtp_port != null;
-            const videoTransceiver = peerConnection.addTransceiver('video', { direction: 'recvonly' });
-            if (videoTransceiver?.receiver) {
-                if ('jitterBufferTarget' in videoTransceiver.receiver) videoTransceiver.receiver.jitterBufferTarget = 0;
-                if ('playoutDelayHint' in videoTransceiver.receiver) videoTransceiver.receiver.playoutDelayHint = 0;
-            }
-            if (hasNativeAudio) {
-                const audioTransceiver = peerConnection.addTransceiver('audio', { direction: 'recvonly' });
-                if (audioTransceiver?.receiver) {
-                    if ('jitterBufferTarget' in audioTransceiver.receiver) audioTransceiver.receiver.jitterBufferTarget = 0;
-                    if ('playoutDelayHint' in audioTransceiver.receiver) audioTransceiver.receiver.playoutDelayHint = 0;
+            try {
+                const hasNativeAudio = nativeState.audioRtpPort != null || nativeState.audio_rtp_port != null;
+                const videoTransceiver = peerConnection.addTransceiver('video', { direction: 'recvonly' });
+                if (videoTransceiver?.receiver) {
+                    if ('jitterBufferTarget' in videoTransceiver.receiver) videoTransceiver.receiver.jitterBufferTarget = 0;
+                    if ('playoutDelayHint' in videoTransceiver.receiver) videoTransceiver.receiver.playoutDelayHint = 0;
                 }
-            }
-
-            unsubscribe = await listenNativeCaptureBridge(async (event) => {
-                if (!event || (event.sessionId !== sessionId && event.session_id !== sessionId)) return;
-                if (event.peerId || event.peer_id) return;
-                if (event.event !== 'ice-candidate' || !event.candidate) return;
-                logDiagnostic(`[JS] Candidato da ponte Rust recebido via evento: ${event.candidate}`);
-                const candidateInit = {
-                    candidate: event.candidate,
-                    sdpMid: null,
-                    sdpMLineIndex: Number(event.mlineIndex ?? event.mline_index ?? 0)
-                };
-                if (!isRemoteDescriptionSet) {
-                    pendingCandidates.push(candidateInit);
-                } else {
-                    try {
-                        await peerConnection.addIceCandidate(candidateInit);
-                    } catch (err) {
-                        logDiagnostic(`[JS Bridge ICE Candidate Error] ${err?.message}`);
-                        console.warn('[Bridge ICE Candidate Error]', err);
+                if (hasNativeAudio) {
+                    const audioTransceiver = peerConnection.addTransceiver('audio', { direction: 'recvonly' });
+                    if (audioTransceiver?.receiver) {
+                        if ('jitterBufferTarget' in audioTransceiver.receiver) audioTransceiver.receiver.jitterBufferTarget = 0;
+                        if ('playoutDelayHint' in audioTransceiver.receiver) audioTransceiver.receiver.playoutDelayHint = 0;
                     }
                 }
-            });
 
-            try {
+                unsubscribe = await listenNativeCaptureBridge(async (event) => {
+                    if (closed) return;
+                    if (!event || (event.sessionId !== sessionId && event.session_id !== sessionId)) return;
+                    if (event.peerId || event.peer_id) return;
+                    if (event.event !== 'ice-candidate' || !event.candidate) return;
+                    logDiagnostic(`[JS] Candidato da ponte Rust recebido via evento: ${event.candidate}`);
+                    const candidateInit = {
+                        candidate: event.candidate,
+                        sdpMid: null,
+                        sdpMLineIndex: Number(event.mlineIndex ?? event.mline_index ?? 0)
+                    };
+                    if (!isRemoteDescriptionSet) {
+                        pendingCandidates.push(candidateInit);
+                    } else {
+                        try {
+                            await peerConnection.addIceCandidate(candidateInit);
+                        } catch (err) {
+                            logDiagnostic(`[JS Bridge ICE Candidate Error] ${err?.message}`);
+                            console.warn('[Bridge ICE Candidate Error]', err);
+                        }
+                    }
+                });
+                if (closed) {
+                    const lateUnsubscribe = unsubscribe;
+                    unsubscribe = () => {};
+                    await lateUnsubscribe();
+                    ensureOpen();
+                }
                 logDiagnostic(`[JS] Criando oferta SDP local...`);
                 const offer = await peerConnection.createOffer();
+                ensureOpen();
                 await peerConnection.setLocalDescription(offer);
+                ensureOpen();
                 await waitForIceGatheringComplete(peerConnection);
+                ensureOpen();
                 const localOffer = peerConnection.localDescription;
                 if (!localOffer?.sdp) throw new Error('WebView não gerou uma oferta SDP');
                 logDiagnostic(`[JS] Oferta SDP gerada (${localOffer.sdp.length} bytes), enviando para Rust...`);
                 const answer = await createNativeCapturePeer(sessionId, localOffer.sdp);
+                ensureOpen();
                 logDiagnostic(`[JS] Resposta SDP recebida do Rust (${answer?.sdp?.length} bytes), aplicando remote description...`);
                 await peerConnection.setRemoteDescription({
                     type: answer.type || answer.sdpType || 'answer',
                     sdp: answer.sdp
                 });
+                ensureOpen();
                 isRemoteDescriptionSet = true;
                 applyReceiverJitter();
 
@@ -314,7 +337,8 @@ export function createNativeWebRtcBridge({ target = globalThis } = {}) {
 
                 const expectAudio = nativeState.audioRtpPort != null || nativeState.audio_rtp_port != null;
                 logDiagnostic(`[JS] Aguardando trilhas de mídia (expectAudio=${expectAudio})...`);
-                await waitForMediaTracks(stream, peerConnection, expectAudio);
+                await waitForMediaTracks(stream, peerConnection, expectAudio, cancellation.signal);
+                ensureOpen();
                 logDiagnostic(`[JS] Trilhas confirmadas! Vídeo: ${stream.getVideoTracks().length}, Áudio: ${stream.getAudioTracks().length}`);
 
                 // Telemetria periódica no arquivo de log

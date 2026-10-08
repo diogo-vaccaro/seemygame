@@ -4,6 +4,8 @@ import { annotateManager } from '../room/annotate.js';
 const cardDisposals = new WeakMap();
 
 function disposeCard(card) {
+  if (annotateManager.container === card) annotateManager.detach();
+  if (pipController.activePipVideo === card.querySelector('video')) void pipController.exitPip();
   cardDisposals.get(card)?.();
   cardDisposals.delete(card);
   const video = card.querySelector('video');
@@ -159,7 +161,8 @@ export function setCardStreamPaused(compatibilityContext, peerId, isPaused, mess
 
 export function removeVideoCard(compatibilityContext, peerId) {
   const normalizedId = (peerId === 'local-stream') ? 'local-me' : peerId;
-  const card = document.getElementById(`card-${normalizedId}`) || document.getElementById(`card-${peerId}`);
+  const card = document.getElementById(`card-${normalizedId}`) || document.getElementById(`card-${peerId}`) ||
+    pipController.pipWindow?.document.getElementById(`card-${normalizedId}`) || pipController.pipWindow?.document.getElementById(`card-${peerId}`);
   if (card) { disposeCard(card); card.remove(); }
   compatibilityContext.stopStatsMonitor(normalizedId);
   compatibilityContext.stopAudioAnalyser(normalizedId);
@@ -192,6 +195,10 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   }
 
   let card = document.getElementById(`card-${peerId}`);
+  if (!card) {
+    card = pipController.pipWindow?.document.getElementById(`card-${peerId}`);
+    if (card) void pipController.exitPip();
+  }
   if (card) {
     const existingVideo = card.querySelector('video');
     const wasLocal = card.dataset.isLocal === 'true';
@@ -364,7 +371,7 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   annotateBtn.innerText = '✏️ Anotar';
   annotateBtn.title = 'Desenhar e fazer anotações táticas sobre o stream';
   annotateBtn.onclick = () => {
-    if (annotateManager.isActive && annotateManager.container === card) {
+    if (annotateManager.isActive && annotateManager.isEditing && annotateManager.container === card) {
       annotateManager.detach();
       annotateBtn.classList.remove('card-btn-active');
     } else {
@@ -495,7 +502,8 @@ export function addOrUpdateVideoCard(compatibilityContext, optionsOrPeerId, stre
   video.controls = false;
   video.muted = isLocal;
   try {
-    const savedSpeaker = typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_audio_output_id') : null;
+    let savedSpeaker = null;
+    try { savedSpeaker = localStorage.getItem('seemygame_audio_output_id'); } catch (_) {}
     if (savedSpeaker && typeof video.setSinkId === 'function') {
       video.setSinkId(savedSpeaker).catch(() => {});
     }

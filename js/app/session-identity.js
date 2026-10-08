@@ -86,13 +86,11 @@ export function setStoredRoomPin(compatibilityContext, newPin) {
 }
 
 export function getClientSessionId(compatibilityContext) {
-  if (typeof sessionStorage === 'undefined') {
-    return 'sess_' + Math.random().toString(36).slice(2, 10);
-  }
-  let sid = sessionStorage.getItem('seemygame_client_session_id');
+  let sid = null;
+  try { sid = sessionStorage.getItem('seemygame_client_session_id'); } catch (_) {}
   if (!sid) {
     sid = 'sess_' + Date.now().toString(36) + '_' + Math.random().toString(36).slice(2, 8);
-    sessionStorage.setItem('seemygame_client_session_id', sid);
+    try { sessionStorage.setItem('seemygame_client_session_id', sid); } catch (_) {}
   }
   return sid;
 }
@@ -106,7 +104,8 @@ export function isCurrentlyStreaming(compatibilityContext) {
 
 export function getLocalUserDisplayName(compatibilityContext) {
   // 1. Apelido salvo nas preferências do usuário ou modal de entrada
-  const savedName = typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_user_name') : null;
+  let savedName = null;
+  try { savedName = localStorage.getItem('seemygame_user_name'); } catch (_) {}
   if (savedName && savedName.trim()) {
     return savedName.trim().slice(0, 30);
   }

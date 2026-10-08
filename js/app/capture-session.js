@@ -87,7 +87,8 @@ export async function startLocalStream(compatibilityContext, options = {}) {
     }
 
     compatibilityContext.localStream = capturedDisplayStream;
-    const replayPref = typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_replay_enabled') : null;
+    let replayPref = null;
+    try { replayPref = localStorage.getItem('seemygame_replay_enabled'); } catch (_) {}
     const shouldRecordReplay = options.replayEnabled !== undefined
       ? options.replayEnabled
       : (replayPref !== 'false');

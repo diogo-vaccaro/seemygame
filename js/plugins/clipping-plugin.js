@@ -56,11 +56,12 @@ export class ClippingPlugin extends BasePlugin {
    */
   stop(sourceId = null) {
     try {
-      this.recorder.stop(sourceId);
+      return this.recorder.stop(sourceId);
     } catch (err) {
       console.warn('[ClippingPlugin] Erro ao encerrar gravador:', err);
+    } finally {
+      this._activeStream = null;
     }
-    this._activeStream = null;
   }
 
   /**
@@ -79,9 +80,9 @@ export class ClippingPlugin extends BasePlugin {
   }
 
   destroy() {
-    super.destroy();
-    this.stop();
-    if (this.ownsRecorder) this.recorder.dispose?.();
+    const cleanup = super.destroy();
+    const stopped = this.stop();
+    return Promise.allSettled([cleanup, stopped, this.ownsRecorder ? this.recorder.dispose?.() : undefined]);
   }
 }
 

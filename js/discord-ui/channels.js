@@ -1,4 +1,5 @@
 /** Room navigation. Voice entry is explicit; the lobby keeps its text chat open. */
+import { createParticipantVolumePopover } from '../ui/participant-controls.js';
 export function bindRoomChannels(ui) {
   if (!ui.elements.roomChannels) return;
   ui.listen(ui.elements.roomChannels, 'click', event => {
@@ -45,6 +46,7 @@ export function renderRoomChannels(ui) {
   const list = ui.elements.roomChannels, rm = ui.roomManager;
   if (!list || !rm) return;
   const focusedChannel = list.contains(document.activeElement) ? document.activeElement.dataset.voiceChannel : null;
+  list.querySelectorAll('.participant-volume-wrapper').forEach(wrapper => wrapper.cleanup?.());
   list.replaceChildren();
   const add = (id, name, members) => {
     const item = document.createElement('div'); item.className = 'room-channel';
@@ -59,7 +61,12 @@ export function renderRoomChannels(ui) {
     if (id !== 'lobby') {
       const people = document.createElement('div'); people.className = 'room-channel-people';
       for (const member of members) {
-        const person = document.createElement('span'); person.textContent = member.name || 'Amigo';
+        const person = document.createElement('div'); person.className = 'room-channel-person';
+        const name = document.createElement('span'); name.textContent = member.name || 'Amigo'; person.append(name);
+        if (ui.voiceManager && member.peerId && member.peerId !== rm.myPeerId && rm.voiceChannelId === id) {
+          const control = createParticipantVolumePopover({ peerId: member.peerId, name: member.name, voiceManager: ui.voiceManager });
+          if (control) person.append(control);
+        }
         person.classList.toggle('speaking', Boolean(member.isSpeaking)); people.append(person);
       }
       if (!members.length) { const empty = document.createElement('small'); empty.textContent = 'Entrar para ouvir e falar'; people.append(empty); }

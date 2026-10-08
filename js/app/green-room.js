@@ -18,7 +18,8 @@ export async function initGreenRoomLobby(compatibilityContext) {
   const joinBtn = document.getElementById('green-room-join-btn');
   const nameInput = document.getElementById('green-room-user-name');
   if (nameInput) {
-    const savedName = (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_user_name') : null);
+    let savedName = null;
+    try { savedName = localStorage.getItem('seemygame_user_name'); } catch (_) {}
     if (savedName && !nameInput.value) nameInput.value = savedName;
   }
 

@@ -69,8 +69,8 @@ export class SoundboardPlugin extends BasePlugin {
   }
 
   destroy() {
-    super.destroy();
-    if (this.ownsManager) this.manager.dispose?.();
+    const cleanup = super.destroy();
+    return Promise.allSettled([cleanup, this.ownsManager ? this.manager.dispose?.() : undefined]);
   }
 }
 

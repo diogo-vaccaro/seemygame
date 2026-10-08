@@ -85,12 +85,12 @@ export class ReactionsPlugin extends BasePlugin {
   }
 
   destroy() {
-    super.destroy();
+    const cleanup = super.destroy();
     if (this._abortController) {
       this._abortController.abort();
       this._abortController = null;
     }
-    if (this.ownsManager) this.manager.dispose?.();
+    return Promise.allSettled([cleanup, this.ownsManager ? this.manager.dispose?.() : undefined]);
   }
 }
 

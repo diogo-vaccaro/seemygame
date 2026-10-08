@@ -15,6 +15,7 @@ export class MultitrackRecorder {
     this.recordedBlobs = new Map();
     this.tickInterval = null;
     this.listeners = new Set();
+    this.stopping = null;
   }
 
   isSupported() {
@@ -51,12 +52,12 @@ export class MultitrackRecorder {
   }
 
   async startRecording(trackStreams = {}, options = {}) {
-    if (this.isRecording) {
+    if (this.isRecording || this.stopping) {
       throw new Error('Uma gravação já está em andamento.');
     }
 
     const validEntries = Object.entries(trackStreams).filter(([_, stream]) => {
-      return stream && (typeof stream.getTracks === 'function' ? stream.getTracks().length > 0 : true);
+      return stream && typeof stream.getTracks === 'function' && stream.getTracks().some(track => track.readyState !== 'ended');
     });
 
     if (validEntries.length === 0) {
@@ -69,7 +70,7 @@ export class MultitrackRecorder {
     this.endTime = 0;
 
     const timeSlice = options.timeSlice || 1000;
-
+    try {
     for (const [name, stream] of validEntries) {
       const hasVideo = typeof stream.getVideoTracks === 'function' && stream.getVideoTracks().length > 0;
       const mimeType = this.getBestMimeType(hasVideo);
@@ -110,11 +111,15 @@ export class MultitrackRecorder {
 
     // Inicia todos os recorders de forma síncrona/imediata
     for (const [name, entry] of this.recorders.entries()) {
-      try {
-        entry.recorder.start(timeSlice);
-      } catch (err) {
-        console.error(`[MultitrackRecorder] Falha ao iniciar gravação da faixa ${name}:`, err);
+      entry.recorder.start(timeSlice);
+    }
+    } catch (error) {
+      // A partial start must never leave hidden recorders running.
+      for (const { recorder } of this.recorders.values()) {
+        if (recorder.state !== 'inactive') { try { recorder.stop(); } catch (_) {} }
       }
+      this.recorders.clear(); this.recordedBlobs.clear(); this.startTime = 0;
+      throw error;
     }
 
     this.isRecording = true;
@@ -128,6 +133,7 @@ export class MultitrackRecorder {
   }
 
   async stopRecording() {
+    if (this.stopping) return this.stopping;
     if (!this.isRecording) {
       return this.recordedBlobs;
     }
@@ -165,7 +171,9 @@ export class MultitrackRecorder {
       stopPromises.push(p);
     }
 
-    await Promise.all(stopPromises);
+    this.stopping = Promise.all(stopPromises);
+    try { await this.stopping; } finally { this.stopping = null; }
+    this.recorders.clear();
     this.notify('stop', {
       duration: this.getDuration(),
       tracks: Array.from(this.recordedBlobs.keys())
@@ -185,7 +193,7 @@ export class MultitrackRecorder {
   }
 
   async exportZip(options = {}) {
-    if (this.isRecording) {
+    if (this.isRecording || this.stopping) {
       await this.stopRecording();
     }
 
@@ -199,9 +207,9 @@ export class MultitrackRecorder {
     const manifestTracks = [];
 
     for (const [name, info] of this.recordedBlobs.entries()) {
-      const ext = info.mimeType && info.mimeType.includes('audio') ? 'webm' : 'webm';
-      const filename = `tracks/${name}.${ext}`;
-      zip.addFile(filename, info.blob);
+      const ext = info.mimeType?.includes('ogg') ? 'ogg' : 'webm';
+      const filename = `tracks/${name.replace(/[\\/]/g, '_')}.${ext}`;
+      await zip.addFile(filename, info.blob);
       manifestTracks.push({
         trackName: name,
         filename,
@@ -220,7 +228,7 @@ export class MultitrackRecorder {
       metadata: options.metadata || {}
     };
 
-    zip.addFile('manifest.json', JSON.stringify(manifest, null, 2));
+    await zip.addFile('manifest.json', JSON.stringify(manifest, null, 2));
 
     const zipBlob = await zip.buildBlob();
     const defaultName = `SeeMyGame-Multitrack-${new Date().toISOString().replace(/[:.]/g, '-')}.zip`;
@@ -243,6 +251,12 @@ export class MultitrackRecorder {
     this.tickInterval = setInterval(() => {
       this.notify('tick', { duration: this.getDuration() });
     }, 1000);
+  }
+
+  dispose() {
+    this._stopTick();
+    this.listeners.clear();
+    return this.stopRecording();
   }
 
   _stopTick() {

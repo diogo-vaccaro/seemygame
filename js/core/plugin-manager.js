@@ -25,6 +25,9 @@ export class PluginManager {
     if (!plugin || !plugin.name) {
       throw new TypeError('[PluginManager] Plugin inválido fornecido.');
     }
+    if (this.plugins.has(plugin.name) && this.plugins.get(plugin.name) !== plugin) {
+      throw new Error(`[PluginManager] Plugin "${plugin.name}" já registrado.`);
+    }
     this.plugins.set(plugin.name, plugin);
     return plugin;
   }
@@ -41,6 +44,7 @@ export class PluginManager {
     };
 
     for (const [name, plugin] of this.plugins.entries()) {
+      if (this.activePlugins.has(plugin)) continue;
       try {
         const initialized = plugin.init(mergedContext);
         // Só destrói instâncias cuja inicialização este manager efetivamente
@@ -67,14 +71,16 @@ export class PluginManager {
   destroy(name) {
     const plugin = this.plugins.get(name);
     if (plugin) {
+      this.plugins.delete(name);
       if (this.activePlugins.delete(plugin)) {
         try {
-          plugin.destroy();
+          return Promise.resolve(plugin.destroy()).catch(error => {
+            this.eventBus.emit('system:error', { sourceEvent: 'plugin:destroy', plugin: name, error });
+          });
         } catch (err) {
           console.error(`[PluginManager] Falha ao encerrar o plugin "${name}":`, err);
         }
       }
-      this.plugins.delete(name);
     }
   }
 
@@ -83,7 +89,10 @@ export class PluginManager {
    */
   destroyAll() {
     const pending = [];
-    for (const plugin of this.activePlugins) {
+    const active = [...this.activePlugins];
+    this.activePlugins.clear();
+    this.plugins.clear();
+    for (const plugin of active) {
       try {
         const result = plugin.destroy();
         if (result?.then) pending.push(Promise.resolve(result).catch(error => {
@@ -93,8 +102,6 @@ export class PluginManager {
         console.error(`[PluginManager] Falha ao encerrar o plugin "${plugin.name}":`, err);
       }
     }
-    this.activePlugins.clear();
-    this.plugins.clear();
     return Promise.allSettled(pending);
   }
 }

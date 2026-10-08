@@ -33,8 +33,12 @@ constructor(options = {}) {
       isSpeaking: false,
     };
 
-    this.selectedMicId = (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_audio_input_id') : '') || '';
-    this.selectedSpeakerId = (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_audio_output_id') : '') || '';
+    this.selectedMicId = '';
+    this.selectedSpeakerId = '';
+    try {
+      this.selectedMicId = localStorage.getItem('seemygame_audio_input_id') || '';
+      this.selectedSpeakerId = localStorage.getItem('seemygame_audio_output_id') || '';
+    } catch (_) { /* Device preferences must not prevent session initialization. */ }
 
     // Controles de Volume (Estilo Discord)
     let savedInputVol = 100;

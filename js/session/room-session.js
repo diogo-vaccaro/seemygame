@@ -5,6 +5,7 @@ import { captureVideoConstraints, videoScaleForProfile } from '../streaming/qual
 import { bindStreamingQuality } from '../streaming/settings-controller.js';
 import { initGreenRoomLobby as mountGreenRoomLobby } from '../app/green-room.js';
 import { getClientSessionId } from '../app/session-identity.js';
+import { readPreference } from '../shared/preferences.js';
 import { handleReloadKeypress, showReloadConfirmationModal, hideReloadConfirmationModal } from '../app/session-lifecycle.js';
 import { createStatsMonitorScope } from '../stats.js';
 import { NativeCaptureProvider } from '../capture.js';
@@ -160,7 +161,7 @@ async function setupRoomSession(peerId, session = roomState.session) {
       sessionStorage.removeItem('seemygame_room_master_' + roomId);
     }
   }
-  const savedName = typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_user_name') : null;
+  const savedName = readPreference('seemygame_user_name');
   if (!savedName && roomState.userName === 'Gamer') {
     roomState.userName = isMaster ? 'Host' : `Amigo ${peerId.slice(-4)}`;
   }
@@ -1091,16 +1092,18 @@ async function initRoomApp(options = {}) {
     chatManager,
     getPeerId: () => roomState.peer?.id || 'room-member',
     getDisplayName: () => roomState.userName,
-    getActiveVideoStream: () => roomState.localStream,
+    getActiveVideoStream: () => roomState.localStream || [...roomState.remoteStreams.values()].find(entry => entry.stream)?.stream,
     getVoiceStreams: () => ({
       localMic: voiceManager.localStream,
-      participants: null
+      participants: Object.fromEntries(voiceManager.getParticipantsList()
+        .filter(participant => !participant.isLocal && participant.stream)
+        .map(participant => [participant.peerId, participant.stream]))
     })
   });
   roomToolsController.bindDOM();
   session.registerCleanup(() => {
-    roomToolsController.dispose();
     streamerMode.destroy();
+    return roomToolsController.dispose();
   });
 
   const startRoomFlow = () => {

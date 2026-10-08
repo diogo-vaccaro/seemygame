@@ -123,25 +123,25 @@ function setStreamerPin(pin) {
   const normalized = pin ? String(pin).trim() : null;
   streamerState.streamerPin = normalized;
   streamerState.admissionGate.roomPin = normalized;
-  if (typeof localStorage !== 'undefined') {
+  try {
     if (normalized) {
       localStorage.setItem('seemygame_streamer_pin', normalized);
     } else {
       localStorage.removeItem('seemygame_streamer_pin');
     }
-  }
+  } catch (_) { /* The admission PIN remains active in memory. */ }
 }
 
 function getStreamerPin() {
   if (streamerState.streamerPin) return streamerState.streamerPin;
-  if (typeof localStorage !== 'undefined') {
+  try {
     const saved = localStorage.getItem('seemygame_streamer_pin');
     if (saved) {
       streamerState.streamerPin = String(saved).trim();
       streamerState.admissionGate.roomPin = streamerState.streamerPin;
       return streamerState.streamerPin;
     }
-  }
+  } catch (_) {}
   return null;
 }
 

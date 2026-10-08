@@ -64,7 +64,7 @@ registerConnection(peerId, conn, initialInfo = {}) {
       const existing = this.members.get(peerId);
       existing.lastSeen = Date.now();
       let changed = false;
-      if (initialInfo.name && initialInfo.name.trim() && existing.name !== initialInfo.name) {
+      if (typeof initialInfo.name === 'string' && initialInfo.name.trim() && existing.name !== initialInfo.name) {
         existing.name = sanitizeText(initialInfo.name).slice(0, 30);
         changed = true;
       }

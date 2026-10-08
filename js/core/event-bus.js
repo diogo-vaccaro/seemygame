@@ -40,7 +40,7 @@ export class EventBus {
     // Ordena de forma decrescente por prioridade
     list.sort((a, b) => b.priority - a.priority);
 
-    return () => this.off(event, handler);
+    return () => this._removeEntry(event, entry);
   }
 
   /**
@@ -58,11 +58,17 @@ export class EventBus {
     const list = this._listeners.get(event);
     const index = list.findIndex(entry => entry.handler === handler);
     if (index !== -1) {
-      list.splice(index, 1);
-      if (list.length === 0) {
-        this._listeners.delete(event);
-      }
+      this._removeEntry(event, list[index]);
     }
+  }
+
+  _removeEntry(event, entry) {
+    const list = this._listeners.get(event);
+    const index = list?.indexOf(entry) ?? -1;
+    if (index === -1) return false;
+    list.splice(index, 1);
+    if (!list.length) this._listeners.delete(event);
+    return true;
   }
 
   /**
@@ -83,7 +89,8 @@ export class EventBus {
 
     for (const entry of list) {
       if (entry.once) {
-        this.off(event, entry.handler);
+        // A nested emit may already have consumed this exact registration.
+        if (!this._removeEntry(event, entry)) continue;
       }
 
       try {

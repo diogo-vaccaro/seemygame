@@ -5,7 +5,8 @@ export function setupRoomSession(compatibilityContext, id) {
   const isMaster = (id === masterId);
   const clientSessionId = compatibilityContext.getClientSessionId();
 
-  const customUserName = (typeof localStorage !== 'undefined' ? localStorage.getItem('seemygame_user_name') : null);
+  let customUserName = null;
+  try { customUserName = localStorage.getItem('seemygame_user_name'); } catch (_) {}
   const userName = (typeof customUserName === 'string' && customUserName.trim())
     ? customUserName.trim().slice(0, 30)
     : (isMaster ? 'Host' : `Amigo ${id.slice(-4)}`);

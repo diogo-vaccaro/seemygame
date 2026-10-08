@@ -14,6 +14,17 @@ import { annotateManager } from './annotate.js';
 import { pollManager } from './poll-manager.js';
 import { multitrackRecorder } from './multitrack-recorder.js';
 
+function getVisibleRoomVideo() {
+  const videos = [
+    ...document.querySelectorAll('.video-card.active video'),
+    ...document.querySelectorAll('.video-card video')
+  ];
+  return videos.find(video => {
+    const rect = video.getBoundingClientRect();
+    return rect.width > 0 && rect.height > 0;
+  }) || null;
+}
+
 export class RoomToolsController {
   constructor() {
     this.session = null;
@@ -27,6 +38,7 @@ export class RoomToolsController {
     this.isMenuOpen = false;
     this.menuEl = null;
     this.cleanups = [];
+    this.domAbort = null;
   }
 
   bindSession({
@@ -47,10 +59,9 @@ export class RoomToolsController {
     this.getVoiceStreams = getVoiceStreams;
 
     // Conectar broadcast nos managers
-    if (broadcast) {
-      annotateManager.setBroadcast(broadcast);
-      pollManager.setBroadcast(broadcast);
-    }
+    annotateManager.setBroadcast(broadcast);
+    annotateManager.getLocalPeerId = getPeerId;
+    pollManager.setBroadcast(broadcast);
 
     // Publicação automática de enquetes no chat
     pollManager.setOnChatAnnounce((summaryText) => {
@@ -79,19 +90,19 @@ export class RoomToolsController {
       const unsubs = [
         d.register('ANNOTATE_DRAW', (data) => annotateManager.handleRemoteMessage(data)),
         d.register('ANNOTATE_CLEAR', (data) => annotateManager.handleRemoteMessage(data)),
+        d.register('ANNOTATE_REMOVE', (data) => annotateManager.handleRemoteMessage(data)),
         d.register('ANNOTATE_SYNC', (data) => annotateManager.handleRemoteMessage(data)),
         d.register('ANNOTATE_REQUEST_SYNC', (data) => annotateManager.handleRemoteMessage(data)),
-        d.register('POLL_CREATE', (data) => pollManager.handleRemoteMessage(data)),
-        d.register('POLL_VOTE', (data) => pollManager.handleRemoteMessage(data)),
-        d.register('POLL_END', (data) => pollManager.handleRemoteMessage(data)),
-        d.register('POLL_SYNC_REQUEST', (data) => pollManager.handleRemoteMessage(data)),
-        d.register('POLL_SYNC', (data) => pollManager.handleRemoteMessage(data))
+        ...['POLL_CREATE', 'POLL_VOTE', 'POLL_END', 'POLL_SYNC_REQUEST', 'POLL_SYNC'].map(type =>
+          d.register(type, (data, source) => pollManager.handleRemoteMessage(data, source?.peer)))
       ];
       this.cleanups.push(() => unsubs.forEach(u => u()));
     }
   }
 
   bindDOM() {
+    if (this.domAbort) return;
+    this.domAbort = new AbortController();
     // 1. Botão do Modo Streamer no Header
     const streamerBtn = document.getElementById('streamer-mode-btn');
     if (streamerBtn && (!streamerMode.elements || streamerMode.elements.toggleBtn !== streamerBtn)) {
@@ -269,13 +280,13 @@ export class RoomToolsController {
   }
 
   toggleAnnotate() {
-    if (annotateManager.isActive) {
+    if (annotateManager.isActive && annotateManager.isEditing) {
       annotateManager.detach();
       return;
     }
 
     // Procurar vídeo principal ativo
-    const activeVideo = document.querySelector('.video-card.active video, .video-card video, #video-grid video, video');
+    const activeVideo = getVisibleRoomVideo();
     if (!activeVideo) {
       if (typeof window !== 'undefined' && window.alert) {
         window.alert('Nenhuma transmissão de vídeo ativa na sala para fazer anotações.');
@@ -289,7 +300,7 @@ export class RoomToolsController {
   }
 
   togglePip() {
-    const activeVideo = document.querySelector('.video-card.active video, .video-card video, #video-grid video, video');
+    const activeVideo = getVisibleRoomVideo();
     if (!activeVideo) {
       if (typeof window !== 'undefined' && window.alert) {
         window.alert('Nenhuma transmissão de vídeo ativa para Picture-in-Picture.');
@@ -306,6 +317,7 @@ export class RoomToolsController {
     if (modal) {
       modal.style.display = 'flex';
       this._updatePollModalView();
+      this.broadcast?.({ type: 'POLL_SYNC_REQUEST' });
     }
   }
 
@@ -320,8 +332,9 @@ export class RoomToolsController {
     const modal = document.getElementById('poll-modal');
     if (!modal) return;
 
-    modal.querySelector('.poll-modal-close')?.addEventListener('click', () => this.closePollModal());
-    modal.querySelector('#poll-cancel-btn')?.addEventListener('click', () => this.closePollModal());
+    const signal = this.domAbort.signal;
+    modal.querySelector('.poll-modal-close')?.addEventListener('click', () => this.closePollModal(), { signal });
+    modal.querySelector('#poll-cancel-btn')?.addEventListener('click', () => this.closePollModal(), { signal });
 
     const form = modal.querySelector('#poll-create-form');
     if (form) {
@@ -335,7 +348,7 @@ export class RoomToolsController {
         const durationSelect = modal.querySelector('#poll-duration-select');
 
         const question = questionInput?.value?.trim();
-        const options = [opt1?.value, opt2?.value, opt3?.value, opt4?.value].filter(Boolean);
+        const options = [opt1?.value, opt2?.value, opt3?.value, opt4?.value].map(value => value?.trim()).filter(Boolean);
         const durationSeconds = Math.max(5, parseInt(durationSelect?.value || '60', 10) || 60);
 
         if (!question || options.length < 2) {
@@ -362,15 +375,15 @@ export class RoomToolsController {
         if (opt4) opt4.value = '';
 
         this._updatePollModalView();
-      });
+      }, { signal });
     }
 
     // Atualizar view do modal ao mudar estado da enquete
-    pollManager.onPollChange(() => {
+    this.cleanups.push(pollManager.onPollChange(() => {
       if (modal.style.display !== 'none') {
         this._updatePollModalView();
       }
-    });
+    }));
   }
 
   _updatePollModalView() {
@@ -413,8 +426,9 @@ export class RoomToolsController {
     const modal = document.getElementById('multitrack-modal');
     if (!modal) return;
 
-    modal.querySelector('.multitrack-modal-close')?.addEventListener('click', () => this.closeMultitrackModal());
-    modal.querySelector('#multitrack-cancel-btn')?.addEventListener('click', () => this.closeMultitrackModal());
+    const signal = this.domAbort.signal;
+    modal.querySelector('.multitrack-modal-close')?.addEventListener('click', () => this.closeMultitrackModal(), { signal });
+    modal.querySelector('#multitrack-cancel-btn')?.addEventListener('click', () => this.closeMultitrackModal(), { signal });
 
     const startBtn = modal.querySelector('#multitrack-start-btn');
     const stopBtn = modal.querySelector('#multitrack-stop-btn');
@@ -432,7 +446,7 @@ export class RoomToolsController {
           tracks.hostMic = voiceStreams.localMic;
         }
         if (voiceStreams.participants) {
-          tracks.participants = voiceStreams.participants;
+          for (const [peerId, stream] of Object.entries(voiceStreams.participants)) tracks[`participant-${peerId}`] = stream;
         }
 
         // Se nenhuma track específica foi obtida por helpers, tenta capturar streams do DOM
@@ -453,7 +467,7 @@ export class RoomToolsController {
       } catch (err) {
         alert('Erro ao iniciar gravação multitrack: ' + err.message);
       }
-    });
+    }, { signal });
 
     stopBtn?.addEventListener('click', async () => {
       try {
@@ -470,9 +484,9 @@ export class RoomToolsController {
         stopBtn.disabled = false;
         stopBtn.textContent = '⏹️ Parar & Baixar ZIP';
       }
-    });
+    }, { signal });
 
-    multitrackRecorder.on('tick', ({ duration }) => {
+    this.cleanups.push(multitrackRecorder.on('tick', ({ duration }) => {
       const timerEl = modal.querySelector('#multitrack-timer');
       if (timerEl) {
         const sec = Math.floor(duration / 1000);
@@ -480,10 +494,10 @@ export class RoomToolsController {
         const s = sec % 60;
         timerEl.textContent = `🔴 REC ${m}:${s < 10 ? '0' : ''}${s}`;
       }
-    });
+    }));
 
-    multitrackRecorder.on('start', () => this._updateMultitrackModalUI());
-    multitrackRecorder.on('stop', () => this._updateMultitrackModalUI());
+    this.cleanups.push(multitrackRecorder.on('start', () => this._updateMultitrackModalUI()));
+    this.cleanups.push(multitrackRecorder.on('stop', () => this._updateMultitrackModalUI()));
   }
 
   _updateMultitrackModalUI() {
@@ -516,8 +530,17 @@ export class RoomToolsController {
 
   dispose() {
     this.closeMenu();
+    this.closePollModal(); this.closeMultitrackModal();
+    this.domAbort?.abort(); this.domAbort = null;
     this.cleanups.forEach(c => c());
     this.cleanups = [];
+    const container = document.getElementById('poll-active-card-container');
+    if (container?._pollTimerInterval) { clearInterval(container._pollTimerInterval); container._pollTimerInterval = null; }
+    pollManager.dispose();
+    annotateManager.clear(false); annotateManager.detach(); annotateManager.setBroadcast(null);
+    annotateManager.streamStrokes.clear(); annotateManager.streamId = null; annotateManager.getLocalPeerId = () => null;
+    this.session = this.broadcast = this.chatManager = null;
+    return Promise.all([multitrackRecorder.dispose(), pipController.exitPip()]);
   }
 }
 

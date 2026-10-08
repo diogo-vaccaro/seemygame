@@ -4,6 +4,9 @@
    ========================================================================== */
 
 /* 1. Modo Streamer (Anti-Sniping e Proteção) */
+.room-channel-person { display: flex; align-items: center; justify-content: space-between; gap: 6px; min-width: 0; }
+.room-channel-person > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.room-channel-person .participant-volume-popover { left: 0; right: auto; }
 body.streamer-mode-active .room-code-protect,
 body.streamer-mode-active .room-id-value,
 body.streamer-mode-active #share-room-code-display,

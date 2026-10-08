@@ -81,25 +81,26 @@ export class TacticalPingPlugin extends BasePlugin {
     }
     this._abortController = new AbortController();
     const { signal } = this._abortController;
+    const context = this.context;
 
     bindTacticalPingInput(canvas, {
       manager: this.manager,
       signal,
-      broadcast: data => this.context?.broadcastDataMessage?.(data),
-      getPeerId: () => this.context?.getPeerId?.(),
-      getDisplayName: () => this.context?.getDisplayName?.(),
-      getRole: () => this.context?.getRole?.(),
-      canDraw: () => this.context?.canUseTacticalPing?.() !== false
+      broadcast: data => context?.broadcastDataMessage?.(data),
+      getPeerId: () => context?.getPeerId?.(),
+      getDisplayName: () => context?.getDisplayName?.(),
+      getRole: () => context?.getRole?.(),
+      canDraw: () => context?.canUseTacticalPing?.() !== false
     });
   }
 
   destroy() {
-    super.destroy();
+    const cleanup = super.destroy();
     if (this._abortController) {
       this._abortController.abort();
       this._abortController = null;
     }
-    if (this.ownsManager) this.manager.dispose?.();
+    return Promise.allSettled([cleanup, this.ownsManager ? this.manager.dispose?.() : undefined]);
   }
 }
 

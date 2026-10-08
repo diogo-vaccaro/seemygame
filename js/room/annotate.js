@@ -26,18 +26,27 @@ export class AnnotateManager {
     this.autoClearTimers = new Set();
 
     this.resizeObserver = null;
+    this.streamId = null;
+    this.streamStrokes = new Map();
+    this.getLocalPeerId = () => null;
     this._boundOnPointerDown = this._onPointerDown.bind(this);
     this._boundOnPointerMove = this._onPointerMove.bind(this);
     this._boundOnPointerUp = this._onPointerUp.bind(this);
     this._boundResize = this._syncCanvasSize.bind(this);
   }
 
-  attach(container, video = null) {
+  attach(container, video = null, editable = true) {
     if (!container) return;
+    if (this.streamId) this.streamStrokes.set(this.streamId, this.strokes);
     this.detach();
 
     this.container = container;
     this.video = video || container.querySelector('video');
+    this.isEditing = editable;
+    this.video?.addEventListener('loadedmetadata', this._boundResize);
+    this.streamId = container.id?.startsWith('card-') ? container.id.slice(5) : null;
+    if (this.streamId === 'local-me') this.streamId = this.getLocalPeerId();
+    this.strokes = this.streamStrokes.get(this.streamId) || [];
 
     this.canvas = document.createElement('canvas');
     this.canvas.className = 'annotate-overlay-canvas';
@@ -47,7 +56,7 @@ export class AnnotateManager {
       left: '0',
       width: '100%',
       height: '100%',
-      pointerEvents: 'auto',
+      pointerEvents: editable ? 'auto' : 'none',
       zIndex: '45',
       touchAction: 'none'
     });
@@ -89,6 +98,9 @@ export class AnnotateManager {
 
   detach() {
     this.isActive = false;
+    this.isEditing = false;
+    this.video?.removeEventListener('loadedmetadata', this._boundResize);
+    this.isDrawing = false; this.currentStroke = null;
     for (const tid of this.autoClearTimers) {
       clearTimeout(tid);
     }
@@ -140,15 +152,26 @@ export class AnnotateManager {
   }
 
   setBroadcast(fn) {
-    this.broadcast = fn;
+    this.broadcast = fn ? message => fn({ ...message, ...(this.streamId ? { streamId: this.streamId } : {}) }) : null;
   }
 
   _syncCanvasSize() {
     if (!this.canvas || !this.container) return;
     const rect = this.container.getBoundingClientRect();
     const dpr = typeof window !== 'undefined' ? (window.devicePixelRatio || 1) : 1;
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
+    const videoRect = this.video?.getBoundingClientRect();
+    let width = videoRect?.width || rect.width;
+    let height = videoRect?.height || rect.height;
+    let left = videoRect?.width ? videoRect.left - rect.left : 0;
+    let top = videoRect?.height ? videoRect.top - rect.top : 0;
+    if (this.video?.videoWidth && this.video?.videoHeight && getComputedStyle(this.video).objectFit === 'contain') {
+      const scale = Math.min(width / this.video.videoWidth, height / this.video.videoHeight);
+      const displayWidth = this.video.videoWidth * scale, displayHeight = this.video.videoHeight * scale;
+      left += (width - displayWidth) / 2; top += (height - displayHeight) / 2;
+      width = displayWidth; height = displayHeight;
+    }
+    width = Math.max(1, Math.round(width)); height = Math.max(1, Math.round(height));
+    Object.assign(this.canvas.style, { left: `${left}px`, top: `${top}px`, width: `${width}px`, height: `${height}px` });
 
     if (this.canvas.width !== width * dpr || this.canvas.height !== height * dpr) {
       this.canvas.width = width * dpr;
@@ -173,7 +196,7 @@ export class AnnotateManager {
   }
 
   _onPointerDown(e) {
-    if (!this.isActive) return;
+    if (!this.isActive || !this.isEditing) return;
     if (e.button !== undefined && e.button !== 0) return;
     this.isDrawing = true;
     const pt = this._getNormalizedCoords(e);
@@ -207,7 +230,7 @@ export class AnnotateManager {
     if (!this.currentStroke) return;
 
     if (this.currentStroke.tool === 'pen' || this.currentStroke.tool === 'highlighter') {
-      this.currentStroke.points.push(pt);
+      if (this.currentStroke.points.length < 4096) this.currentStroke.points.push(pt);
     } else {
       this.currentStroke.shapeEnd = pt;
     }
@@ -222,6 +245,7 @@ export class AnnotateManager {
     if (this.currentStroke) {
       const stroke = this.currentStroke;
       this.strokes.push(stroke);
+      if (this.strokes.length > 256) this.strokes.shift();
       this.currentStroke = null;
 
       if (this.broadcast) {
@@ -244,10 +268,29 @@ export class AnnotateManager {
   }
 
   _eraseNear(pt, radius = 0.05) {
-    const beforeCount = this.strokes.length;
+    const before = this.strokes;
+    const distance = (a, b) => {
+      const dx = b.x - a.x, dy = b.y - a.y, length = dx * dx + dy * dy;
+      const t = length ? Math.max(0, Math.min(1, ((pt.x - a.x) * dx + (pt.y - a.y) * dy) / length)) : 0;
+      return Math.hypot(pt.x - a.x - t * dx, pt.y - a.y - t * dy);
+    };
     this.strokes = this.strokes.filter(s => {
+      if (s.shapeStart && s.shapeEnd && ['arrow', 'rect', 'circle'].includes(s.tool)) {
+        const a = s.shapeStart, b = s.shapeEnd;
+        if (s.tool === 'arrow') return distance(a, b) >= radius;
+        if (s.tool === 'rect') {
+          const corners = [a, { x: b.x, y: a.y }, b, { x: a.x, y: b.y }];
+          return corners.every((point, i) => distance(point, corners[(i + 1) % 4]) >= radius);
+        }
+        const center = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 }, rx = Math.abs(b.x - a.x) / 2, ry = Math.abs(b.y - a.y) / 2;
+        for (let i = 0; i < 64; i++) {
+          const angle = i * Math.PI / 32;
+          if (Math.hypot(pt.x - center.x - rx * Math.cos(angle), pt.y - center.y - ry * Math.sin(angle)) < radius) return false;
+        }
+        return true;
+      }
       if (s.points && s.points.length > 0) {
-        return !s.points.some(p => Math.hypot(p.x - pt.x, p.y - pt.y) < radius);
+        return !s.points.some((p, i) => distance(p, s.points[i + 1] || p) < radius);
       }
       if (s.shapeStart && s.shapeEnd) {
         const midX = (s.shapeStart.x + s.shapeEnd.x) / 2;
@@ -257,13 +300,11 @@ export class AnnotateManager {
       return true;
     });
 
-    if (this.strokes.length !== beforeCount) {
+    if (this.strokes.length !== before.length) {
       this.redraw();
       if (this.broadcast) {
-        this.broadcast({
-          type: 'ANNOTATE_SYNC',
-          strokes: this.strokes
-        });
+        const remaining = new Set(this.strokes.map(stroke => stroke.id));
+        before.filter(stroke => !remaining.has(stroke.id)).forEach(stroke => this.broadcast({ type: 'ANNOTATE_REMOVE', strokeId: stroke.id }));
       }
     }
   }
@@ -271,6 +312,7 @@ export class AnnotateManager {
   removeStroke(strokeId) {
     this.strokes = this.strokes.filter(s => s.id !== strokeId);
     this.redraw();
+    this.broadcast?.({ type: 'ANNOTATE_REMOVE', strokeId });
   }
 
   clear(notify = true) {
@@ -290,6 +332,17 @@ export class AnnotateManager {
 
   handleRemoteMessage(msg) {
     if (!msg || typeof msg !== 'object') return;
+    if (msg.streamId && msg.streamId !== this.streamId) {
+      if (typeof msg.streamId !== 'string' || msg.streamId.length > 128) return;
+      const id = msg.streamId === this.getLocalPeerId() ? 'local-me' : msg.streamId;
+      if (msg.type === 'ANNOTATE_CLEAR') { this.streamStrokes.set(msg.streamId, []); return; }
+      if (msg.type === 'ANNOTATE_REMOVE') {
+        this.streamStrokes.set(msg.streamId, (this.streamStrokes.get(msg.streamId) || []).filter(stroke => stroke.id !== msg.strokeId)); return;
+      }
+      const target = document.getElementById(`card-${id}`);
+      if (!target || !['ANNOTATE_DRAW', 'ANNOTATE_SYNC'].includes(msg.type)) return;
+      this.attach(target, target.querySelector('video'), false);
+    }
 
     if (msg.type === 'ANNOTATE_REQUEST_SYNC') {
       if (this.strokes.length > 0 && this.broadcast) {
@@ -302,14 +355,16 @@ export class AnnotateManager {
     }
 
     if (msg.type === 'ANNOTATE_DRAW' && msg.stroke) {
+      if (!this._validStroke(msg.stroke) || this.strokes.some(stroke => stroke.id === msg.stroke.id)) return;
       if (!this.isActive || !this.canvas) {
         const target = document.querySelector('.video-card.active, .video-card, #video-grid');
         if (target) {
           const video = target.querySelector('video');
-          this.attach(target, video);
+          this.attach(target, video, false);
         }
       }
       this.strokes.push(msg.stroke);
+      if (this.strokes.length > 256) this.strokes.shift();
       this.redraw();
       if (this.autoClear) {
         const tid = setTimeout(() => {
@@ -318,12 +373,25 @@ export class AnnotateManager {
         }, this.autoClearDelay);
         this.autoClearTimers.add(tid);
       }
+    } else if (msg.type === 'ANNOTATE_REMOVE' && typeof msg.strokeId === 'string') {
+      this.strokes = this.strokes.filter(stroke => stroke.id !== msg.strokeId); this.redraw();
     } else if (msg.type === 'ANNOTATE_CLEAR') {
       this.clear(false);
     } else if (msg.type === 'ANNOTATE_SYNC' && Array.isArray(msg.strokes)) {
-      this.strokes = msg.strokes;
+      if (msg.strokes.length > 256 || msg.strokes.some(stroke => !this._validStroke(stroke))) return;
+      this.strokes = [...new Map(msg.strokes.map(stroke => [stroke.id, stroke])).values()];
       this.redraw();
     }
+  }
+
+  _validStroke(stroke) {
+    const point = p => p && Number.isFinite(p.x) && Number.isFinite(p.y) && p.x >= 0 && p.x <= 1 && p.y >= 0 && p.y <= 1;
+    return stroke && typeof stroke.id === 'string' && stroke.id.length <= 128 &&
+      ['pen', 'highlighter', 'arrow', 'rect', 'circle'].includes(stroke.tool) &&
+      (stroke.width == null || (Number.isFinite(stroke.width) && stroke.width > 0 && stroke.width <= 64)) &&
+      (stroke.color == null || (typeof stroke.color === 'string' && stroke.color.length <= 32)) &&
+      (!stroke.points || (Array.isArray(stroke.points) && stroke.points.length <= 4096 && stroke.points.every(point))) &&
+      (!stroke.shapeStart || point(stroke.shapeStart)) && (!stroke.shapeEnd || point(stroke.shapeEnd));
   }
 
   redraw() {

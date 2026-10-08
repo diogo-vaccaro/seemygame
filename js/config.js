@@ -13,9 +13,10 @@ export const PUBLIC_WEB_ORIGIN = 'https://seemygame.vercel.app';
  * changing the bundle.
  */
 export function getPublicOrigin() {
-  const configured = typeof window !== 'undefined' && typeof localStorage !== 'undefined'
-    ? localStorage.getItem('seemygame_public_origin')
-    : null;
+  let configured = null;
+  try {
+    if (typeof window !== 'undefined') configured = window.localStorage?.getItem('seemygame_public_origin');
+  } catch (_) { /* Storage is optional in embedded or restricted browsers. */ }
   const candidate = configured || (typeof window !== 'undefined' ? window.__SEEMYGAME_PUBLIC_ORIGIN__ : null);
   if (candidate) {
     try {

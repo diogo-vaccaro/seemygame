@@ -190,6 +190,9 @@ dispose() {
 destroy() {
     if (this._destroyed) return;
     this._destroyed = true;
+    for (const container of [this.elements.roomParticipantsList, this.elements.voiceStageGrid, this.elements.roomChannels]) {
+      container?.querySelectorAll('.participant-volume-wrapper').forEach(wrapper => wrapper.cleanup?.());
+    }
     for (const fn of this._cleanupFns.splice(0).reverse()) {
       try { fn(); } catch (e) {}
     }

@@ -41,6 +41,7 @@ addRemoteParticipant(peerId, optionsOrStream = {}) {
     let audioElem = null;
     let gainNode = null;
     let sourceNode = null;
+    let sourceAudioElem = null;
     let streamToPlay = stream;
 
     if (stream && typeof document !== 'undefined') {
@@ -71,6 +72,15 @@ addRemoteParticipant(peerId, optionsOrStream = {}) {
         });
       }
       document.body.appendChild(audioElem);
+      if (streamToPlay !== stream) {
+        // Chromium starts decoding RTC audio when a media element consumes the
+        // original stream. Keep that consumer silent; the mixer owns playback.
+        sourceAudioElem = document.createElement('audio');
+        sourceAudioElem.autoplay = true; sourceAudioElem.muted = true;
+        sourceAudioElem.srcObject = stream; sourceAudioElem.style.display = 'none';
+        document.body.appendChild(sourceAudioElem);
+        try { sourceAudioElem.play()?.catch?.(() => {}); } catch (_) {}
+      }
       try {
         const playPromise = audioElem.play();
         if (playPromise && typeof playPromise.catch === 'function') {
@@ -91,6 +101,7 @@ addRemoteParticipant(peerId, optionsOrStream = {}) {
       audioElem,
       gainNode,
       sourceNode,
+      sourceAudioElem,
       vadInterval: null,
     };
 
@@ -113,16 +124,15 @@ removeRemoteParticipant(peerId) {
       if (p.sourceNode) {
         try { p.sourceNode.disconnect(); } catch (e) {}
       }
-      if (p.audioElem) {
+      for (const element of [p.audioElem, p.sourceAudioElem]) {
+        if (!element) continue;
         try {
-          p.audioElem.pause();
-          p.audioElem.srcObject = null;
-          p.audioElem.remove();
+          element.pause();
+          element.srcObject = null;
+          element.remove();
         } catch (e) {}
       }
-      if (p.vadInterval) {
-        clearInterval(p.vadInterval);
-      }
+      this.stopRemoteVAD(p);
       this.participants.delete(peerId);
       this.emit('participantUpdate', this.getParticipantsList());
     }

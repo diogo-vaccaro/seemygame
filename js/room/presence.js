@@ -11,6 +11,7 @@ removeMember(peerId) {
       return;
     }
 
+    const connections = new Set([this.pendingConnections.get(peerId), this.meshConnections.get(peerId)]);
     this.pendingConnections.delete(peerId);
     this.authenticatedPeers.delete(peerId);
     this.meshConnections.delete(peerId);
@@ -27,6 +28,7 @@ removeMember(peerId) {
       this.emit('membersUpdated', this.getMembersList());
       this.notifyState();
     }
+    for (const conn of connections) { try { conn?.close?.(); } catch (_) {} }
   }
 
 setLocalStreaming(isStreaming, details = {}) {

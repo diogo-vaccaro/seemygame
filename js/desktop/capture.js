@@ -111,7 +111,7 @@ export async function getAudioExclusionCandidates() {
     }
 }
 
-export async function startNativeCapture({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, captureApi = null, showCursor = undefined, width, height, fps, bitrateKbps, excludeApp } = {}) {
+export async function startNativeCapture({ sourceId, audioMode = 'none', videoCodec = null, h264Encoder = null, captureBackend = null, captureApi = null, rawVideoQueue = null, showCursor = undefined, width, height, fps, bitrateKbps, excludeApp } = {}) {
     if (!isDesktopApp()) throw new Error('Captura nativa só está disponível no app desktop');
     const args = {
         sourceId: requireSourceId(sourceId),
@@ -122,6 +122,7 @@ export async function startNativeCapture({ sourceId, audioMode = 'none', videoCo
     if (h264Encoder) args.h264Encoder = String(h264Encoder);
     if (captureBackend) args.captureBackend = String(captureBackend);
     if (captureApi) args.captureApi = String(captureApi);
+    if (rawVideoQueue != null) args.rawVideoQueue = String(rawVideoQueue);
     if (width != null) args.width = Number(width);
     if (height != null) args.height = Number(height);
     if (fps != null) args.fps = Number(fps);
@@ -133,7 +134,7 @@ export async function startNativeCapture({ sourceId, audioMode = 'none', videoCo
 
 export async function reconfigureNativeCapture(options = {}) {
     if (!isDesktopApp()) return null;
-    const { sessionId, audioMode, videoCodec, h264Encoder, captureBackend, captureApi, showCursor, width, height, fps, bitrateKbps, excludeApp } = options;
+    const { sessionId, audioMode, videoCodec, h264Encoder, captureBackend, captureApi, rawVideoQueue, showCursor, width, height, fps, bitrateKbps, excludeApp } = options;
     if (!sessionId) throw new Error('Sessão de captura nativa inválida para reconfiguração');
     const args = { sessionId };
     if (audioMode !== undefined) args.audioMode = String(audioMode);
@@ -142,6 +143,7 @@ export async function reconfigureNativeCapture(options = {}) {
     if (captureBackend != null) args.captureBackend = String(captureBackend);
     if (captureApi != null) args.captureApi = String(captureApi);
     if (showCursor !== undefined) args.showCursor = Boolean(showCursor);
+    if (rawVideoQueue != null) args.rawVideoQueue = String(rawVideoQueue);
     if (width != null) args.width = Number(width);
     if (height != null) args.height = Number(height);
     if (fps != null) args.fps = Number(fps);
@@ -181,13 +183,14 @@ export async function addNativeCaptureIceCandidate(sessionId, mlineIndex, candid
 
 export async function listenNativeCapture(callback) {
     if (!isDesktopApp() || typeof callback !== 'function') return () => {};
+    let internals, callbackId;
     try {
-        const internals = window.__TAURI_INTERNALS__;
+        internals = window.__TAURI_INTERNALS__;
         if (!internals || typeof internals.transformCallback !== 'function') {
             return () => {};
         }
         const event = 'native-capture-state';
-        const callbackId = internals.transformCallback((payload) => callback(normalizeNativeCaptureState(payload?.payload ?? payload)));
+        callbackId = internals.transformCallback((payload) => callback(normalizeNativeCaptureState(payload?.payload ?? payload)));
         const eventId = await invokeDesktopCommand('plugin:event|listen', {
             event,
             target: { kind: 'Any' },
@@ -199,6 +202,9 @@ export async function listenNativeCapture(callback) {
             try { await invokeDesktopCommand('plugin:event|unlisten', { event, eventId }); } catch (error) { /* idempotente */ }
         };
     } catch (err) {
+        if (callbackId != null) {
+            try { internals?.unregisterCallback?.(callbackId); } catch (_) { /* Callback cleanup is best effort. */ }
+        }
         console.warn('[Desktop] Eventos de captura nativa indisponíveis:', err);
         return () => {};
     }
@@ -206,13 +212,14 @@ export async function listenNativeCapture(callback) {
 
 export async function listenNativeCaptureBridge(callback) {
     if (!isDesktopApp() || typeof callback !== 'function') return () => {};
+    let internals, callbackId;
     try {
-        const internals = window.__TAURI_INTERNALS__;
+        internals = window.__TAURI_INTERNALS__;
         if (!internals || typeof internals.transformCallback !== 'function') {
             return () => {};
         }
         const event = 'native-capture-bridge';
-        const callbackId = internals.transformCallback((payload) => {
+        callbackId = internals.transformCallback((payload) => {
             callback(payload?.payload ?? payload);
         });
         const eventId = await invokeDesktopCommand('plugin:event|listen', {
@@ -226,6 +233,9 @@ export async function listenNativeCaptureBridge(callback) {
             try { await invokeDesktopCommand('plugin:event|unlisten', { event, eventId }); } catch (error) { /* idempotente */ }
         };
     } catch (err) {
+        if (callbackId != null) {
+            try { internals?.unregisterCallback?.(callbackId); } catch (_) { /* Callback cleanup is best effort. */ }
+        }
         console.warn('[Desktop] Eventos ICE da ponte nativa indisponíveis:', err);
         return () => {};
     }

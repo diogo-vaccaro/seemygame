@@ -68,20 +68,25 @@ export class BasePlugin {
    */
   destroy() {
     if (!this.enabled) return;
-
-    for (const fn of this._cleanupFns) {
+    const context = this.context;
+    const cleanups = this._cleanupFns;
+    this._cleanupFns = [];
+    this.enabled = false;
+    this.context = null;
+    const pending = [];
+    for (const fn of cleanups) {
       try {
-        fn();
+        const result = fn();
+        if (result?.then) pending.push(Promise.resolve(result).catch(error => {
+          context?.eventBus?.emit('system:error', { sourceEvent: 'plugin:cleanup', plugin: this.name, error });
+        }));
       } catch (err) {
         console.error(`[BasePlugin] Erro na função de limpeza do plugin "${this.name}":`, err);
       }
     }
-    this._cleanupFns = [];
-    this.enabled = false;
-
-    if (this.context?.eventBus) {
-      this.context.eventBus.emit(`plugin:${this.name}:destroyed`, { name: this.name });
+    if (context?.eventBus) {
+      context.eventBus.emit(`plugin:${this.name}:destroyed`, { name: this.name });
     }
-    this.context = null;
+    return Promise.allSettled(pending);
   }
 }
