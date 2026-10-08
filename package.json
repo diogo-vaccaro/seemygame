@@ -43,6 +43,8 @@
     "test:e2e:capture-stages": "node tools/e2e/native-capture-stages.mjs",
     "test:e2e:viewer-agent": "node tools/e2e/viewer-agent.mjs",
     "test:e2e:remote-smoke": "node tools/e2e/remote-viewer-smoke.mjs",
+    "test:e2e:rooms-directory": "node tests/e2e-rooms-directory.mjs",
+    "test:e2e:rooms-directory-adversarial": "node tests/e2e-rooms-directory-adversarial.mjs",
     "verify": "npm run check:modules && npm run check:html && npm run check:css && npm run test:smoke && npm test && npm run build:dist"
   },
   "keywords": [
