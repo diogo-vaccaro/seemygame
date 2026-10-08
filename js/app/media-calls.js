@@ -115,12 +115,16 @@ export function initiateMediaCallToViewer(compatibilityContext, viewerPeerId) {
         if (sample && typeof sample.rtt === 'number') {
           compatibilityContext.lastViewerTelemetry.set(viewerPeerId, {
             rtt: sample.rtt,
-            packetLoss: sample.packetLossRate || 0
+            packetLoss: sample.packetLossRate || 0,
+            isLan: sample.isLan,
+            isRelay: sample.isRelay
           });
           if (compatibilityContext.roomRelayManager) {
             compatibilityContext.roomRelayManager.updateTelemetry(viewerPeerId, {
               rtt: sample.rtt,
-              packetLoss: sample.packetLossRate || 0
+              packetLoss: sample.packetLossRate || 0,
+              isLan: sample.isLan,
+              isRelay: sample.isRelay
             });
           }
         }
@@ -129,7 +133,9 @@ export function initiateMediaCallToViewer(compatibilityContext, viewerPeerId) {
             packetLossRate: sample.packetLossRate || 0,
             rttMs: sample.rtt || 0,
             qualityLimitationReason: sample.qualityReason || sample.qualityLimitationReason,
-            encodeTimeMs: sample.encodeTimeMs
+            encodeTimeMs: sample.encodeTimeMs,
+            isLan: sample.isLan,
+            isRelay: sample.isRelay
           }, viewerPeerId);
         }
       });

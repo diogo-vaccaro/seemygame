@@ -134,4 +134,23 @@ describe('Módulo: relay.js (P2P Tree Mesh)', () => {
     expect(RelayManager.forwardMediaStream(emptyStream, mockPc)).toBe(false);
     expect(mockPc.addTrack).not.toHaveBeenCalled();
   });
+
+  it('deve alocar espectadores em LAN diretamente sem consumir a cota de espectadores WAN', () => {
+    // maxDirectViewers é 2. Adiciona 1 espectador LAN e 2 espectadores WAN
+    const vLan1 = manager.registerViewer('viewer-lan-1', { rtt: 2, isLan: true });
+    expect(vLan1.role).toBe('direct');
+
+    const vWan1 = manager.registerViewer('viewer-wan-1', { rtt: 35 });
+    const vWan2 = manager.registerViewer('viewer-wan-2', { rtt: 40 });
+    expect(vWan1.role).toBe('direct');
+    expect(vWan2.role).toBe('direct');
+
+    // 3º espectador WAN deve virar relay porque a cota WAN (2) foi atingida
+    const vWan3 = manager.registerViewer('viewer-wan-3', { rtt: 50 });
+    expect(vWan3.role).toBe('relay');
+
+    // Outro espectador LAN ainda consegue entrar como direto
+    const vLan2 = manager.registerViewer('viewer-lan-2', { rtt: 3, isLan: true });
+    expect(vLan2.role).toBe('direct');
+  });
 });

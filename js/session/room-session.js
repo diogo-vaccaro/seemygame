@@ -632,6 +632,9 @@ function sendRoomStream(memberId, conn, rm, session) {
   });
   if (!call) return;
   roomState.screenCalls.set(memberId, call);
+  if (roomState.relayManager) {
+    roomState.relayManager.registerViewer(memberId, { rtt: 50 });
+  }
   hookPeerConnectionSdp(call.peerConnection, () => settings.bitrateKbps * 1000);
   applyTransceiverOptimizations(call.peerConnection, 'ultra-low', settings.videoCodec || 'h264');
   const stopTuning = applySenderOptimizationsWhenReady(
@@ -645,7 +648,17 @@ function sendRoomStream(memberId, conn, rm, session) {
     () => (roomState.captureSettings || settings).degradationPreference || 'maintain-resolution'
   );
   const quality = createQualityController(call.peerConnection, () => roomState.captureSettings || settings);
-  startStatsMonitor(`send-${memberId}`, call.peerConnection, true, sample => quality.process(sample), {
+  startStatsMonitor(`send-${memberId}`, call.peerConnection, true, sample => {
+    quality.process(sample);
+    if (sample && roomState.relayManager) {
+      roomState.relayManager.updateTelemetry(memberId, {
+        rtt: sample.rtt,
+        packetLoss: sample.packetLossRate || 0,
+        isLan: sample.isLan,
+        isRelay: sample.isRelay
+      });
+    }
+  }, {
     cardId: 'local-me',
     context: () => ({
       requestedFps: (roomState.captureSettings || settings).fps,
@@ -655,6 +668,7 @@ function sendRoomStream(memberId, conn, rm, session) {
   });
   let unregisterCleanup;
   const release = () => {
+    roomState.relayManager?.unregisterViewer(memberId);
     stopTuning();
     quality.dispose();
     unregisterCleanup?.();
