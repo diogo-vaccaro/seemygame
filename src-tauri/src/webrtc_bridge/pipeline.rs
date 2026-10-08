@@ -11,6 +11,7 @@ pub struct NativeWebRtcBridge {
     pub(crate) video_input: Arc<crate::media::RtpCounters>,
     pub(crate) video_output: Arc<crate::media::RtpCounters>,
     pub(crate) video_queue: gst::Element,
+    pub(crate) video_clock_mode: VideoRtpClockMode,
 }
 
 impl NativeWebRtcBridge {
@@ -121,6 +122,16 @@ impl NativeWebRtcBridge {
             .unwrap_or(video_worker_payload);
         let video_caps = rtp_caps(codec, video_worker_payload);
         let video_src = make_udp_source("seemygame-video", video_rtp_port, &video_caps)?;
+        // Explicit diagnostic opt-in. Keep the established default while testing
+        // frame pacing, latency and A/V synchronization end to end.
+        let video_clock_mode=VideoRtpClockMode::parse(&std::env::var("SEEMYGAME_NATIVE_VIDEO_RTP_CLOCK").unwrap_or_else(|_|"arrival".into()))?;
+        let video_clock=if video_clock_mode==VideoRtpClockMode::Rtp {
+            let clock=make_element("rtpjitterbuffer","seemygame-video-clock")?;
+            clock.set_property("latency",0u32);
+            clock.set_property_from_str("mode","none");
+            clock.set_property("do-lost",true);
+            Some(clock)
+        }else{None};
         let video_depay = make_rtp_element(codec.depayloader(), "seemygame-video-depay")?;
         let video_pay = make_rtp_element(codec.payloader(), "seemygame-video-pay")?;
         video_pay.set_property("pt", video_payload as u32);
@@ -153,7 +164,11 @@ impl NativeWebRtcBridge {
                 &video_queue,
             ])
             .map_err(|error| format!("Falha ao adicionar entrada de vídeo: {error}"))?;
-        video_src
+        if let Some(clock)=video_clock.as_ref() {
+            pipeline.add(clock).map_err(|error|format!("Falha ao adicionar relógio RTP de vídeo: {error}"))?;
+            video_src.link(clock).map_err(|error|format!("Falha ao ligar relógio RTP de vídeo: {error}"))?;
+        }
+        video_clock.as_ref().unwrap_or(&video_src)
             .link(&video_depay)
             .map_err(|error| format!("Falha ao ligar depayloader de vídeo: {error}"))?;
         video_depay
@@ -325,7 +340,7 @@ impl NativeWebRtcBridge {
             error_state,
             shutdown,
             bus_thread: Some(bus_thread),
-            video_input, video_output, video_queue,
+            video_input, video_output, video_queue, video_clock_mode,
         })
     }
 
@@ -417,6 +432,7 @@ impl NativeWebRtcBridge {
             let mut row = counters.snapshot();
             row["id"] = stage.into(); row["type"] = "native-rtp-stage".into(); row["stage"] = stage.into();
             row["scope"] = "Local RTP pad; bridge-output is before webrtcbin, not NIC departure or remote delivery".into();
+            row["videoRtpClockMode"]=self.video_clock_mode.name().into();
             if stage == "bridge-output" {
                 row["queueLevelTimeMs"] = (self.video_queue.property::<u64>("current-level-time") as f64 / 1_000_000.0).into();
                 row["queueLevelBuffers"] = self.video_queue.property::<u32>("current-level-buffers").into();

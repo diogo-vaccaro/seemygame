@@ -83,6 +83,57 @@ pub(crate) fn collect(webrtc: &gst::Element) -> Result<Vec<serde_json::Value>, S
 mod tests {
     use super::*;
     #[test]
+    fn depay_repay_video_clock_can_reconstruct_original_rtp_ticks() {
+        let runtime=GStreamerRuntime::discover().expect("runtime empacotado de teste");
+        initialize_gstreamer(&runtime).unwrap();
+        // Generate a valid encoded fixture including SPS/PPS; an arbitrary IDR-like
+        // byte string is not a valid depay/pay integration test.
+        let fixture=gst::parse::launch("videotestsrc num-buffers=6 ! video/x-raw,width=32,height=32,framerate=60/1 ! x264enc tune=zerolatency speed-preset=ultrafast key-int-max=1 bframes=0 ! rtph264pay pt=96 aggregate-mode=zero-latency ! appsink name=encoded sync=false").unwrap().downcast::<gst::Pipeline>().unwrap();
+        let sink=fixture.by_name("encoded").unwrap();
+        fixture.set_state(gst::State::Playing).unwrap();
+        let mut packets=Vec::new();let mut frame_index=0usize;
+        while frame_index<6 {
+            let sample=sink.emit_by_name::<Option<gst::Sample>>("try-pull-sample", &[&gst::ClockTime::from_seconds(2)]).expect("encoded RTP fixture");
+            let map=sample.buffer().unwrap().map_readable().unwrap();
+            let packet=map.as_slice().to_vec();let marker=packet[1]&0x80!=0;
+            packets.push((packet,frame_index));if marker {frame_index+=1;}
+        }
+        fixture.set_state(gst::State::Null).unwrap();
+        for reconstruct in [false,true] {
+        let clock=if reconstruct {"rtpjitterbuffer latency=0 mode=none ! "}else{""};
+        let pipeline=gst::parse::launch(&format!("appsrc name=input is-live=true format=time caps=\"application/x-rtp,media=video,encoding-name=H264,clock-rate=90000,payload=96\" ! identity name=before ! {clock}rtph264depay ! rtph264pay pt=96 perfect-rtptime=true config-interval=-1 aggregate-mode=zero-latency ! identity name=after ! fakesink sync=false async=false")).unwrap().downcast::<gst::Pipeline>().unwrap();
+        let before=Arc::new(crate::media::RtpCounters::default());
+        let after=Arc::new(crate::media::RtpCounters::default());
+        attach_rtp_probe(&pipeline.by_name("before").unwrap(),"src",Arc::clone(&before)).unwrap();
+        attach_rtp_probe(&pipeline.by_name("after").unwrap(),"src",Arc::clone(&after)).unwrap();
+        pipeline.set_state(gst::State::Playing).unwrap();
+        for (sequence,(fixture_packet,index)) in packets.iter().enumerate() {
+            let pts_ms=[0u64,1,33,34,66,67][*index];
+            let mut packet=fixture_packet.clone();
+            packet[2..4].copy_from_slice(&(sequence as u16).to_be_bytes());
+            packet[4..8].copy_from_slice(&(*index as u32*1500).to_be_bytes());
+            packet[8..12].copy_from_slice(&1u32.to_be_bytes());
+            let mut buffer=gst::Buffer::from_mut_slice(packet);
+            buffer.get_mut().unwrap().set_pts(gst::ClockTime::from_mseconds(pts_ms));
+            assert_eq!(pipeline.by_name("input").unwrap().emit_by_name::<gst::FlowReturn>("push-buffer", &[&buffer]),gst::FlowReturn::Ok);
+        }
+        assert_eq!(pipeline.by_name("input").unwrap().emit_by_name::<gst::FlowReturn>("end-of-stream", &[]),gst::FlowReturn::Ok);
+        let deadline=Instant::now()+Duration::from_secs(2);
+        while after.snapshot()["framesProduced"]!=6&&Instant::now()<deadline {thread::sleep(Duration::from_millis(5));}
+        pipeline.set_state(gst::State::Null).unwrap();
+        let incoming=before.snapshot();let outgoing=after.snapshot();
+        assert_eq!(incoming["framesProduced"],6);
+        assert_eq!(outgoing["framesProduced"],6,"{outgoing}");
+        assert_eq!(incoming["rtpFrameClock"]["timestampDeltaMs"]["max"],1500.0/90.0);
+        if reconstruct {
+            for bound in ["min","max"] {assert!((outgoing["rtpFrameClock"]["timestampDeltaMs"][bound].as_f64().unwrap()-1500.0/90.0).abs()<0.03,"{outgoing}");}
+        } else {
+            assert_eq!(outgoing["rtpFrameClock"]["timestampDeltaMs"]["min"],1.0);
+            assert_eq!(outgoing["rtpFrameClock"]["timestampDeltaMs"]["max"],32.0);
+        }
+        }
+    }
+    #[test]
     fn rtp_pad_probe_counts_fragmented_buffer_lists_without_decoding() {
         let runtime = GStreamerRuntime::discover().expect("runtime empacotado de teste");
         initialize_gstreamer(&runtime).unwrap();

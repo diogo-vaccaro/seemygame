@@ -1,6 +1,23 @@
 //! negotiation; internal to the native webrtc_bridge subsystem.
 use super::*;
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) enum VideoRtpClockMode { Arrival, Rtp }
+impl VideoRtpClockMode {
+    pub(crate) fn parse(value: &str) -> Result<Self, String> {
+        match value { "arrival" => Ok(Self::Arrival), "rtp" => Ok(Self::Rtp), _ => Err("SEEMYGAME_NATIVE_VIDEO_RTP_CLOCK: use arrival ou rtp".into()) }
+    }
+    pub(crate) fn name(self) -> &'static str { match self { Self::Arrival => "arrival", Self::Rtp => "rtp" } }
+}
+
+#[cfg(test)]
+#[test]
+fn video_rtp_clock_mode_rejects_unrecognized_experiments() {
+    assert_eq!(VideoRtpClockMode::parse("arrival").unwrap(),VideoRtpClockMode::Arrival);
+    assert_eq!(VideoRtpClockMode::parse("rtp").unwrap(),VideoRtpClockMode::Rtp);
+    assert!(VideoRtpClockMode::parse("fast").is_err());
+}
+
 pub(crate) fn make_udp_source(
     name: &str,
     port: u16,

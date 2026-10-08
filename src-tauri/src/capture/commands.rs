@@ -72,6 +72,7 @@ pub fn start_native_capture(
     h264_encoder: Option<String>,
     capture_backend: Option<String>,
     capture_api: Option<String>,
+    raw_video_queue: Option<String>,
     show_cursor: Option<bool>,
     width: Option<u32>,
     height: Option<u32>,
@@ -168,6 +169,12 @@ pub fn start_native_capture(
             Ok(config) => config,
             Err(error) => return fail_start(&app, &starting_state, &error),
         };
+    if let Some(policy) = raw_video_queue.as_deref() {
+        config.raw_video_queue = match media::RawVideoQueuePolicy::parse(policy) {
+            Ok(value) => value,
+            Err(error) => return fail_start(&app, &starting_state, &error),
+        };
+    }
     if let Some(backend) = capture_backend.as_deref() {
         config.capture_backend = match media::CaptureBackend::parse(backend) {
             Ok(value) => value,
@@ -378,6 +385,7 @@ pub fn reconfigure_native_capture(
     h264_encoder: Option<String>,
     capture_backend: Option<String>,
     capture_api: Option<String>,
+    raw_video_queue: Option<String>,
     show_cursor: Option<bool>,
     width: Option<u32>,
     height: Option<u32>,
@@ -414,10 +422,13 @@ pub fn reconfigure_native_capture(
         }
     }
 
+    // Parse before taking the live worker so invalid input cannot orphan capture.
+    let requested_queue = raw_video_queue.as_deref().map(media::RawVideoQueuePolicy::parse).transpose()?;
     let current_worker = session.worker.take().expect("worker present");
     let video_rtp_port = current_worker.video_rtp_port;
     let audio_rtp_port = current_worker.audio_rtp_port;
     let mut new_config = current_worker.config.clone();
+    if let Some(policy) = requested_queue { new_config.raw_video_queue = policy; }
     let mut next_exclude_app = session.state.exclude_app.clone();
 
     if let Some(target) = exclude_app.as_deref() {
