@@ -86,4 +86,32 @@ describe('Módulo: abr.js (AdaptiveBitrateController)', () => {
     expect(controller.currentBitrateBps).toBe(8000000);
     expect(bitrateChangeSpy).toHaveBeenCalledWith(8000000);
   });
+
+  it('calculateMeshGuardCap deve isentar espectadores em LAN do rateio de upload residencial', () => {
+    // 3 espectadores no total, mas 2 são LAN -> apenas 1 WAN, então mantém o bitrate base integral
+    const cap = AdaptiveBitrateController.calculateMeshGuardCap(3, 8000000, 2);
+    expect(cap).toBe(8000000);
+  });
+
+  it('applyMeshGuard não deve limitar pares com isLan ativo', () => {
+    controller.setTargetBitrate(30000000, 'peer-lan');
+    controller.processSample({ isLan: true, rttMs: 2 }, 'peer-lan');
+
+    controller.setTargetBitrate(8000000, 'peer-wan');
+    controller.processSample({ isLan: false, rttMs: 40 }, 'peer-wan');
+
+    // 4 espectadores totais, 1 LAN
+    controller.applyMeshGuard(4, 8000000, 1);
+
+    expect(controller.getCurrentBitrate('peer-lan')).toBe(30000000);
+    expect(controller.getCurrentBitrate('peer-wan')).toBeLessThanOrEqual(4000000);
+  });
+
+  it('em LAN deve recuperar bitrate mais rapidamente (após 1 amostra saudável)', () => {
+    controller.currentBitrateBps = 4000000;
+    controller.processSample({ packetLossRate: 0.0, rttMs: 2, isLan: true });
+
+    // Com 1 amostra saudável na LAN já deve acionar aumento de bitrate
+    expect(controller.currentBitrateBps).toBe(5000000); // 4M * 1.25
+  });
 });

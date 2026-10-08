@@ -1,9 +1,10 @@
 /** sdp: commands receive explicit compatibility ports; no page initialization. */
-export function tuneSdpForGaming(sdp, bitrateBps) {
+export function tuneSdpForGaming(sdp, bitrateBps, options = {}) {
   if (!sdp) return sdp;
 
   const lines = sdp.split(/\r?\n/);
   const kbps = Math.round(bitrateBps / 1000);
+  const isLan = options?.isLan === true;
 
   // Divide o SDP em blocos: sessão global e seções m=
   const sections = [];
@@ -85,8 +86,8 @@ export function tuneSdpForGaming(sdp, bitrateBps) {
       // Remove quaisquer b=AS ou b=TIAS existentes neste bloco de vídeo
       const filtered = section.filter((l) => !l.startsWith('b=AS:') && !l.startsWith('b=TIAS:'));
 
-      const minK = 1000;
-      const startK = Math.max(2500, Math.round(kbps * 0.7));
+      const minK = isLan ? Math.max(5000, Math.round(kbps * 0.4)) : 1000;
+      const startK = isLan ? Math.round(kbps * 0.95) : Math.max(2500, Math.round(kbps * 0.7));
       const maxK = Math.round(kbps * 1.3);
 
       // Identifica payload types de H.264 presentes no SDP
@@ -153,6 +154,9 @@ export function tuneSdpForGaming(sdp, bitrateBps) {
 
       const bandwidthLines = [`b=AS:${kbps}`, `b=TIAS:${bitrateBps}`];
       modifiedLines.splice(insertIdx, 0, ...bandwidthLines);
+      if (!modifiedLines.some(l => l.startsWith('a=rtcp-rsize'))) {
+        modifiedLines.push('a=rtcp-rsize');
+      }
       return modifiedLines;
     }
 
@@ -162,7 +166,7 @@ export function tuneSdpForGaming(sdp, bitrateBps) {
   return processedSections.flat().join('\r\n');
 }
 
-export function hookPeerConnectionSdp(pc, getBitrateBps) {
+export function hookPeerConnectionSdp(pc, getBitrateBps, getOptions) {
   if (!pc || pc._sdpHooked) return;
   pc._sdpHooked = true;
 
@@ -170,7 +174,8 @@ export function hookPeerConnectionSdp(pc, getBitrateBps) {
   pc.setLocalDescription = async function(desc) {
     if (desc && desc.sdp) {
       const bitrate = typeof getBitrateBps === 'function' ? getBitrateBps() : (getBitrateBps || 7500000);
-      desc.sdp = tuneSdpForGaming(desc.sdp, bitrate);
+      const options = typeof getOptions === 'function' ? getOptions() : (getOptions || {});
+      desc.sdp = tuneSdpForGaming(desc.sdp, bitrate, options);
     }
     return originalSetLocal(desc);
   };
