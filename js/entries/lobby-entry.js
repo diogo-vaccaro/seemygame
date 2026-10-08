@@ -30,6 +30,7 @@ import {
 import { showToast } from '../ui.js';
 import { TERMS_VERSION } from '../config.js';
 import { createSessionContext } from '../core/session-context.js';
+import { initLobbyDirectory } from '../directory/lobby-directory.js';
 
 export const isLobbyPage = true;
 
@@ -177,6 +178,23 @@ export function initLobbyApp(options = {}) {
   // Integração com Always-on-Top caso esteja rodando no Desktop Tauri
   initDesktopAlwaysOnTop();
 
+  // Inicializa o Diretório Comunitário de Salas ao Vivo
+  const directory = initLobbyDirectory({
+    session,
+    onSelectRoom: (selectedRoomId) => {
+      if (roomIdInput) {
+        roomIdInput.value = selectedRoomId;
+      }
+      const userName = userNameInput ? userNameInput.value.trim() : '';
+      if (!userName) {
+        showToast('Defina seu apelido para entrar na sala!', 'info');
+        userNameInput?.focus();
+        return;
+      }
+      handleJoinRoom(selectedRoomId);
+    }
+  });
+
   // Abertura cinematográfica para Desktop
   let introController = null;
   const replayIntroBtn = document.getElementById('desktop-intro-btn');
@@ -202,6 +220,7 @@ export function initLobbyApp(options = {}) {
   return {
     active: true,
     session,
+    directory,
     dispose: () => {
       session.dispose();
       document.removeEventListener('keydown', handleTermsKeyDown);
