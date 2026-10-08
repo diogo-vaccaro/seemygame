@@ -13,6 +13,8 @@ export class FloatingReactionsManager {
     this.activeElements = new Set();
     this.lastSentTimestamp = 0;
     this.cooldownMs = options.cooldownMs || 250; // Max 4 por segundo por jogador
+    this.lastBurstTimestamp = 0;
+    this.burstCooldownMs = options.burstCooldownMs || 1200; // 1 rajada a cada 1.2s
   }
 
   setContainer(container) {
@@ -40,6 +42,19 @@ export class FloatingReactionsManager {
   }
 
   /**
+   * Verifica taxa de envio para rajadas (burst)
+   */
+  canSendBurst() {
+    const now = Date.now();
+    if (now - this.lastBurstTimestamp >= this.burstCooldownMs) {
+      this.lastBurstTimestamp = now;
+      this.lastSentTimestamp = now;
+      return true;
+    }
+    return false;
+  }
+
+  /**
    * Instancia uma reação flutuante na tela
    * @param {Object} param
    */
@@ -55,13 +70,16 @@ export class FloatingReactionsManager {
     const el = document.createElement('div');
     el.className = 'floating-reaction';
 
+    // Suporte à preferência do sistema por redução de movimento
+    const prefersReduced = typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
     // Posição horizontal aleatória (10% a 90%) se não fornecida
     const parsedX = Number(xPercent);
     const x = xPercent !== null && Number.isFinite(parsedX)
       ? Math.max(5, Math.min(95, parsedX))
       : (Math.random() * 70 + 15);
-    const drift = (Math.random() - 0.5) * 60; // Desvio lateral em pixels
-    const duration = 2.0 + Math.random() * 0.8; // 2s a 2.8s
+    const drift = prefersReduced ? 0 : ((Math.random() - 0.5) * 60); // Desvio lateral em pixels
+    const duration = prefersReduced ? 1.5 : (2.0 + Math.random() * 0.8); // 2s a 2.8s
 
     el.style.left = `${x}%`;
     el.style.setProperty('--drift', `${drift}px`);
@@ -99,6 +117,32 @@ export class FloatingReactionsManager {
     setTimeout(cleanup, (duration + 0.5) * 1000);
 
     return el;
+  }
+
+  /**
+   * Instancia uma rajada (burst) de emojis em leque
+   * @param {Object} param
+   */
+  spawnBurst({ emoji, count = 4, originX = null, senderName = null }) {
+    if (!this.isValidReaction(emoji)) return [];
+    const elements = [];
+    const baseCount = Math.min(6, Math.max(2, Number(count) || 4));
+    const center = originX !== null && Number.isFinite(Number(originX))
+      ? Math.max(10, Math.min(90, Number(originX)))
+      : (Math.random() * 60 + 20);
+
+    for (let i = 0; i < baseCount; i++) {
+      setTimeout(() => {
+        const offset = (Math.random() - 0.5) * 18;
+        const el = this.spawnReaction({
+          emoji,
+          xPercent: Math.max(5, Math.min(95, center + offset)),
+          senderName: i === 0 ? senderName : null
+        });
+        if (el) elements.push(el);
+      }, i * 65);
+    }
+    return elements;
   }
 
   dispose() {

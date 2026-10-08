@@ -33,9 +33,22 @@ export class ReactionsPlugin extends BasePlugin {
           });
           if (eventBus) eventBus.emit('reaction:spawned', data);
           if (shouldRelay()) broadcast(data, sourceConn?.peer);
-        }, { description: 'Reactions: Spawn Floating Emoji' })
+        }, { description: 'Reactions: Spawn Floating Emoji' }),
+
+        dispatcher.register('EMOJI_BURST', (data, sourceConn) => {
+          this.manager.spawnBurst({
+            emoji: data.emoji,
+            count: data.count || 4,
+            originX: data.originX,
+            senderName: data.senderName
+          });
+          if (eventBus) eventBus.emit('reaction:burst-spawned', data);
+          if (shouldRelay()) broadcast(data, sourceConn?.peer);
+        }, { description: 'Reactions: Spawn Floating Emoji Burst' })
       );
     }
+
+    this._setupKeyboardShortcuts();
 
     this.registerCleanup(() => {
       this._dispatcherUnsubs.forEach(unsub => unsub());
@@ -45,6 +58,69 @@ export class ReactionsPlugin extends BasePlugin {
         this._abortController = null;
       }
     });
+  }
+
+  _setupKeyboardShortcuts() {
+    if (typeof document === 'undefined') return;
+
+    const CODE_OR_KEY_MAP = {
+      'Digit1': '🔥', 'Numpad1': '🔥', '1': '🔥',
+      'Digit2': '💀', 'Numpad2': '💀', '2': '💀',
+      'Digit3': '🎯', 'Numpad3': '🎯', '3': '🎯',
+      'Digit4': '👏', 'Numpad4': '👏', '4': '👏',
+      'Digit5': '😂', 'Numpad5': '😂', '5': '😂',
+      'Digit6': 'GG', 'Numpad6': 'GG', '6': 'GG',
+      'Digit7': '🚀', 'Numpad7': '🚀', '7': '🚀',
+      'Digit8': '❤️', 'Numpad8': '❤️', '8': '❤️'
+    };
+
+    const onKeyDown = (e) => {
+      if (e.ctrlKey || e.altKey || e.metaKey) return;
+      const emoji = CODE_OR_KEY_MAP[e.code] || CODE_OR_KEY_MAP[e.key];
+      if (!emoji) return;
+
+      // Guarda estrita de foco e contexto
+      const active = document.activeElement;
+      if (active && (
+        active.tagName === 'INPUT' ||
+        active.tagName === 'TEXTAREA' ||
+        active.tagName === 'SELECT' ||
+        active.isContentEditable ||
+        active.closest?.('.modal-overlay[style*="flex"], .modal-overlay[style*="block"]')
+      )) {
+        return;
+      }
+
+      // Guarda de Co-op Player 2: não interferir quando o gamepad/teclado estiver sob captura
+      if (this.context?.coopController?.isCapturingInput?.()) {
+        return;
+      }
+
+      const senderName = this.context?.getDisplayName?.() || 'Gamer';
+      const originX = Math.random() * 70 + 15;
+
+      if (e.shiftKey && this.manager.canSendBurst()) {
+        this.manager.spawnBurst({ emoji, count: 4, originX, senderName });
+        this.context?.broadcastDataMessage?.({
+          type: 'EMOJI_BURST',
+          emoji,
+          count: 4,
+          originX,
+          senderName
+        });
+      } else if (this.manager.canSend()) {
+        this.manager.spawnReaction({ emoji, xPercent: originX, senderName });
+        this.context?.broadcastDataMessage?.({
+          type: 'EMOJI_REACTION',
+          emoji,
+          xPercent: originX,
+          senderName
+        });
+      }
+    };
+
+    document.addEventListener('keydown', onKeyDown);
+    this._dispatcherUnsubs.push(() => document.removeEventListener('keydown', onKeyDown));
   }
 
   /**
@@ -65,20 +141,31 @@ export class ReactionsPlugin extends BasePlugin {
       const { signal } = this._abortController;
 
       dock.querySelectorAll('.reaction-dock-btn').forEach((btn) => {
-        btn.addEventListener('click', () => {
+        btn.addEventListener('click', (e) => {
           const emoji = btn.dataset.emoji;
-          if (!emoji || !this.manager.canSend()) return;
+          if (!emoji) return;
 
           const senderName = this.context?.getDisplayName?.() || 'Espectador';
-          const xPercent = Math.random() * 70 + 15;
+          const originX = Math.random() * 70 + 15;
 
-          this.manager.spawnReaction({ emoji, xPercent, senderName });
-          this.context?.broadcastDataMessage?.({
-            type: 'EMOJI_REACTION',
-            emoji,
-            xPercent,
-            senderName
-          });
+          if (e.shiftKey && this.manager.canSendBurst()) {
+            this.manager.spawnBurst({ emoji, count: 4, originX, senderName });
+            this.context?.broadcastDataMessage?.({
+              type: 'EMOJI_BURST',
+              emoji,
+              count: 4,
+              originX,
+              senderName
+            });
+          } else if (this.manager.canSend()) {
+            this.manager.spawnReaction({ emoji, xPercent: originX, senderName });
+            this.context?.broadcastDataMessage?.({
+              type: 'EMOJI_REACTION',
+              emoji,
+              xPercent: originX,
+              senderName
+            });
+          }
         }, { signal });
       });
     }
