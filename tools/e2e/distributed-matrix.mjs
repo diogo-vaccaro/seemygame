@@ -6,6 +6,7 @@ import {fileURLToPath} from 'node:url';
 import {randomBytes,createHash} from 'node:crypto';
 import {readViewerControl,redactViewerSecrets} from './harness/remote-viewer.mjs';
 import {QUALITY_PROFILES} from '../../js/config.js';
+import {parseSshMessages} from './harness/ssh-messages.mjs';
 const root=fileURLToPath(new URL('../../',import.meta.url)),args=process.argv.slice(2),option=(key,fallback)=>{const i=args.indexOf(key);return i<0?fallback:args[i+1];};
 const ssh='C:/Windows/System32/OpenSSH/ssh.exe',host=option('--host','notebook'),seconds=Number(option('--seconds','70'));
 const senders=option('--senders','native,web').split(','),receivers=option('--receivers','chrome,tauri').split(','),presets=option('--presets','ultra,balanced').split(',');
@@ -63,7 +64,7 @@ async function remoteTask(runtime,mode){
  let out='',err='';child.stdout.on('data',d=>out+=d.toString());child.stderr.on('data',d=>err+=d.toString());
  const exited=waitExit(child);let timer;const code=await Promise.race([exited,new Promise((_,reject)=>{timer=setTimeout(()=>{child.kill();reject(new Error('Receiver task SSH timeout'));},70000);})]).finally(()=>clearTimeout(timer));
  if(code!==0)throw new Error('Receiver task failed: '+err.slice(-3000));
- const messages=out.split(/\r?\n/).flatMap(line=>{try{return [JSON.parse(line)];}catch{return [];}});
+ const messages=parseSshMessages(out);
  return mode==='start'?messages.find(m=>m.kind==='seemygame-e2e-viewer-ready'):messages.at(-1);
 }
 let ready,metadata,tunnel,currentRuntime,active;

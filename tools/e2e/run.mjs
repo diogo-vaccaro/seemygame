@@ -860,8 +860,16 @@ try {
         report.codecCapabilities={host:await hostPage.evaluate(readCapabilities),viewer:await viewerPage.evaluate(readCapabilities)};
         await hostPage.locator('#audio-mode-select').selectOption(nativeAudioMode, { force: true });
         await hostPage.locator('#quality-preset').selectOption(preset, { force: true });
+        if(process.env.SEEMYGAME_NATIVE_RAW_QUEUE && await hostPage.locator('#stream-performance-mode').count()) {
+          const policy=process.env.SEEMYGAME_NATIVE_RAW_QUEUE;
+          if(!['bounded','latest'].includes(policy))throw Error('Invalid raw queue experiment');
+          await hostPage.locator('#stream-performance-mode').selectOption(policy==='latest'?'responsive':'smooth',{force:true});
+        }
         report.selectedNativePreset=await hostPage.locator('#quality-preset').inputValue();
         if(report.selectedNativePreset!==preset)throw new Error('Native quality preset was not applied');
+        if(await hostPage.locator('#stream-fps-select').count() && [30,60,120].includes(streamProfile.fps)) {
+          await hostPage.locator('#stream-fps-select').selectOption(String(streamProfile.fps),{force:true});
+        }
         await hostPage.locator('#video-codec-select').selectOption(requestedCodec, { force: true });
         if (await hostPage.locator('#capture-backend-select').count()) await hostPage.locator('#capture-backend-select').selectOption(captureBackend, { force: true });
         await hostPage.locator('#h264-encoder-select').selectOption(encoder,{force:true});

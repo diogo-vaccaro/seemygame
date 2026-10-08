@@ -12,6 +12,13 @@ describe('native handoff and transport evidence',()=>{
   expect(nativeStageEvidence({perf:1000,rows:[row(60)]},{perf:2000,rows:[row(10)]}).worker.fps).toBeNull();
   expect(nativeStageEvidence(null,null)).toBeNull();
  });
+ it('preserves media-clock distributions by stage without presenting arrival jitter as latency',()=>{
+  const clock={clockRateHz:90000,timestampDeltaMs:{p50:16.667},arrivalDeltaMs:{p95:32},scope:'local marker pairs'};
+  const result=nativeStageEvidence(null,{perf:1000,rows:[row(60,{rtpFrameClock:clock})]});
+  expect(result.worker.rtpFrameClock).toEqual(clock);
+  expect(result.worker.fps).toBeNull();
+  expect(nativeStageEvidence(null,{perf:1000,rows:[row(60)]}).worker.rtpFrameClock).toBeNull();
+ });
  it('does not blame a healthy worker for RTP loss downstream',()=>{
   const entry={source:{fps:60},nativeStages:{worker:{fps:60,lifetimeMaxPauseMs:24},stages:[]},webInbound:{decodedFps:20,nackDelta:5}};
   expect(classifyStutter(entry,true).suspectedCause).toBe('RTP_LOSS_OR_RECOVERY');

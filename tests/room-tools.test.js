@@ -100,6 +100,37 @@ describe('RoomToolsController', () => {
     expect(controller.isMenuOpen).toBe(false);
   });
 
+  it('selects the visible active stream instead of hidden clip previews for annotations and PiP', () => {
+    document.body.innerHTML = `
+      <div hidden><video id="clip-preview-video"></video></div>
+      <div class="video-card"><video id="first-stream"></video></div>
+      <div class="video-card active" id="active-card"><video id="active-stream"></video></div>
+    `;
+    for (const video of document.querySelectorAll('.video-card video')) {
+      vi.spyOn(video, 'getBoundingClientRect').mockReturnValue({ width: 640, height: 360 });
+    }
+    const attach = vi.spyOn(annotateManager, 'attach').mockImplementation(() => {});
+    vi.spyOn(annotateManager, 'createToolbar').mockImplementation(() => {});
+    const pip = vi.spyOn(pipController, 'toggleVideoPip').mockResolvedValue(true);
+    const card = document.getElementById('active-card'), video = document.getElementById('active-stream');
+    controller.toggleAnnotate();
+    expect(attach).toHaveBeenCalledWith(card, video);
+    controller.togglePip();
+    expect(pip).toHaveBeenCalledWith(video, card);
+    video.getBoundingClientRect.mockReturnValue({ width: 0, height: 0 });
+    controller.toggleAnnotate();
+    expect(attach).toHaveBeenLastCalledWith(document.getElementById('first-stream').parentElement, document.getElementById('first-stream'));
+  });
+
+  it('reports no transmission when only the hidden clip preview exists', () => {
+    document.body.innerHTML = '<div hidden><video id="clip-preview-video"></video></div>';
+    const alert = vi.spyOn(window, 'alert').mockImplementation(() => {});
+    const attach = vi.spyOn(annotateManager, 'attach');
+    controller.toggleAnnotate();
+    expect(alert).toHaveBeenCalledOnce();
+    expect(attach).not.toHaveBeenCalled();
+  });
+
   it('opens poll modal and handles creation form', () => {
     const createPollSpy = vi.spyOn(pollManager, 'createPoll');
     controller.bindSession({ getPeerId: () => 'alice', getDisplayName: () => 'Alice' });

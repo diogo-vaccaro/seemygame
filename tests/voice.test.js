@@ -28,6 +28,20 @@ describe('Módulo: voice.js (Chat de Voz P2P Estilo Discord)', () => {
     vi.clearAllMocks();
   });
 
+  it('consumes the original RTC stream silently and cleans both media elements on removal', () => {
+    voice.addRemoteParticipant('friend-decoder', { stream: mockStream });
+    const participant = voice.participants.get('friend-decoder');
+    expect(participant.sourceAudioElem.srcObject).toBe(mockStream);
+    expect(participant.sourceAudioElem.muted).toBe(true);
+    expect(participant.sourceAudioElem.isConnected).toBe(true);
+    voice.setUserVolume('friend-decoder', 0);
+    expect(mockTrack.enabled).toBe(true);
+    voice.removeRemoteParticipant('friend-decoder');
+    expect(participant.sourceAudioElem.isConnected).toBe(false);
+    expect(participant.sourceAudioElem.srcObject).toBeNull();
+    expect(participant.audioElem.isConnected).toBe(false);
+  });
+
   describe('Conexão e Desconexão de Voz', () => {
     it('deve entrar na sala de voz com stream customizado', async () => {
       const joinSpy = vi.fn();

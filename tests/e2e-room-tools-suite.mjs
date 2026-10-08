@@ -261,6 +261,32 @@ try {
   // TESTE 5: GRAVAÇÃO MULTITRACK SINCRONIZADA EM ZIP
   // =========================================================================
   console.log('🧪 6. Testando Gravação Multitrack Sincronizada em ZIP...');
+  for (const [index, page] of pages.entries()) await page.evaluate(frequency => {
+    navigator.mediaDevices.getUserMedia = async () => {
+      const context = new AudioContext(); await context.resume();
+      const oscillator = context.createOscillator(), gain = context.createGain(), destination = context.createMediaStreamDestination();
+      oscillator.frequency.value = frequency; gain.gain.value = .2;
+      oscillator.connect(gain); gain.connect(destination); oscillator.start();
+      window.__testMic = { context, oscillator }; return destination.stream;
+    };
+  }, 440 + index * 220);
+  for (const page of pages) await page.locator('[data-voice-channel="voice-1"]').click();
+  for (const page of pages) await wait(page, async () => {
+    const room = (await import('/js/entries/room-entry.js')).roomState;
+    const voice = room.session.services.voiceManager;
+    if (!voice.isInVoice || ![...voice.participants.values()].some(participant => !participant.isLocal && participant.stream?.getAudioTracks().length)) return false;
+    const calls = [...room.messageHandlers.activeVoiceCalls.values()];
+    for (const call of calls) {
+      const stats = await call.peerConnection.getStats();
+      if ([...stats.values()].some(stat => stat.type === 'inbound-rtp' && stat.kind === 'audio' && stat.bytesReceived > 0)) return true;
+    }
+    return false;
+  });
+  await pages[0].evaluate(async () => {
+    const voice = (await import('/js/entries/room-entry.js')).roomState.session.services.voiceManager;
+    const remote = voice.getParticipantsList().find(participant => !participant.isLocal);
+    voice.setUserVolume(remote.peerId, 0);
+  });
   await toolsDockBtn.click();
   await pages[0].locator('[data-action="multitrack"]').click();
   await pages[0].locator('#multitrack-modal').waitFor({ state: 'visible' });
@@ -290,16 +316,42 @@ try {
       filename: 'e2e-test-session.zip',
       autoDownload: false
     });
+    const { calculateCrc32 } = await import('/js/utils/zip-builder.js');
+    const bytes = new Uint8Array(await res.blob.arrayBuffer()), view = new DataView(bytes.buffer), entries = [];
+    const context = new AudioContext();
+    let offset = 0;
+    while (view.getUint32(offset, true) === 0x04034b50) {
+      const size = view.getUint32(offset + 18, true), length = view.getUint16(offset + 26, true), extra = view.getUint16(offset + 28, true);
+      const name = new TextDecoder().decode(bytes.slice(offset + 30, offset + 30 + length));
+      const start = offset + 30 + length + extra, content = bytes.slice(start, start + size);
+      let rms = null, duration = null;
+      if (name.startsWith('tracks/') && name !== 'tracks/master.webm') {
+        const audio = await context.decodeAudioData(content.buffer.slice(content.byteOffset, content.byteOffset + content.byteLength));
+        const samples = audio.getChannelData(0); rms = Math.sqrt(samples.reduce((sum, value) => sum + value * value, 0) / samples.length); duration = audio.duration;
+      }
+      entries.push({ name, size, rms, duration, crcValid: calculateCrc32(content) === view.getUint32(offset + 14, true) });
+      offset = start + size;
+    }
+    await context.close();
     return {
       size: res.blob.size,
       manifest: res.manifest,
-      filename: res.filename
+      filename: res.filename,
+      entries
     };
   });
 
   assert.ok(zipResult.size > 0, 'Blob do arquivo ZIP deve ter tamanho maior que 0');
   assert.equal(zipResult.manifest.app, 'SeeMyGame');
   assert.ok(zipResult.manifest.tracks.length >= 1, 'Manifesto deve conter as faixas gravadas');
+  evidence.checks.push({ recordedArchive: zipResult });
+  assert.ok(zipResult.manifest.tracks.some(track => track.trackName === 'hostMic'));
+  assert.ok(zipResult.manifest.tracks.some(track => track.trackName.startsWith('participant-')));
+  for (const track of zipResult.manifest.tracks) {
+    const entry = zipResult.entries.find(entry => entry.name === track.filename);
+    assert.ok(entry?.size > 0 && entry.crcValid, `Faixa ausente, vazia ou corrompida: ${track.filename}`);
+    if (track.trackName !== 'master') assert.ok(entry.rms > .001 && entry.duration > 1, `Áudio vazio ou curto: ${track.filename}`);
+  }
   console.log('✅ Gravação multitrack e empacotamento ZIP (PKZIP 2.0) validados com sucesso');
 
   await pages[0].locator('.multitrack-modal-close').click();
@@ -310,7 +362,7 @@ try {
   // =========================================================================
   console.log('🧪 7. Testando Controle Individual de Volume e Mute Local...');
   // Na sidebar de participantes do Host (pages[0]), localiza o item do participante Gamer 1
-  const participantWrapper = pages[0].locator('.participant-item .participant-volume-wrapper').first();
+  const participantWrapper = pages[0].locator('.room-channel-person .participant-volume-wrapper').first();
   await participantWrapper.waitFor({ state: 'visible' });
 
   // Abre popover de volume

@@ -57,5 +57,6 @@ describe('StreamerModeController', () => {
     const novoController = new StreamerModeController();
     novoController.init();
     expect(novoController.enabled).toBe(true);
+    novoController.destroy();
   });
 });

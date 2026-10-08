@@ -59,6 +59,28 @@ try {
  await wait(async () => (await receivedSize())?.height === 1080);
  report.initial = await senderState(); report.checks.push('Active 1080p video reaches receiver');
 
+ assert.equal(await pages[0].locator('#stream-performance-mode').isDisabled(), true);
+ await change('stream-fps-select', '30');
+ await change('stream-resolution-select', '720');
+ await wait(async () => { const s=await senderState();return s.settings?.height===720&&s.settings.fps===30&&s.encoding?.maxFramerate===30&&s.encoding.maxBitrate===7500000; });
+ await wait(async () => (await receivedSize())?.height===720);
+ report.independentSettings=await senderState();
+ report.checks.push('Independent 720p/30 FPS controls preserve 7.5 Mbps and reach the real WebRTC sender/receiver');
+ await pages[0].locator('#tuning-modal').evaluate(el=>el.style.display='flex');
+ await pages[0].screenshot({path:fileURLToPath(new URL('settings-wide.png',output))});
+ const wideViewport=pages[0].viewportSize();
+ await pages[0].setViewportSize({width:380,height:820});
+ const fits=await pages[0].locator('.video-settings').evaluate(el=>{const r=el.getBoundingClientRect();return r.left>=0&&r.right<=innerWidth&&el.scrollWidth<=el.clientWidth+1;});
+ assert.equal(fits,true,'Independent video controls fit a 380px viewport');
+ await pages[0].screenshot({path:fileURLToPath(new URL('settings-mobile.png',output))});
+ await pages[0].locator('[data-streaming-help="stream-performance-help"]').focus();
+ assert.equal(await pages[0].locator('#stream-performance-help').isVisible(),true);
+ await pages[0].keyboard.press('Escape');
+ assert.equal(await pages[0].locator('#stream-performance-help').isVisible(),false);
+ await pages[0].setViewportSize(wideViewport);
+ report.checks.push('Settings fit mobile and mode help opens with keyboard focus and closes with Escape');
+ await pages[0].locator('#tuning-modal').evaluate(el=>el.style.display='none');
+
  await change('quality-preset', 'ultra');
  await wait(async () => { const s = await senderState(); return s.settings?.height === 720 && s.encoding?.scaleResolutionDownBy === 1.5 && s.encoding.maxBitrate === 4500000; });
  await wait(async () => { const s = await receivedSize(); return s?.width === 1280 && s.height === 720; });

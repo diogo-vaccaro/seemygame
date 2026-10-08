@@ -196,7 +196,7 @@ try {
       question: 'Próxima partida é competitiva?',
       options: ['Sim, bora subir de elo!', 'Não, apenas casual'],
       durationSeconds: 120,
-      creatorId: 'pro-gamer-0'
+      creatorId: (await import('/js/entries/room-entry.js')).roomState.peer.id
     });
   });
 

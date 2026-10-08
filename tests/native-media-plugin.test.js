@@ -14,6 +14,40 @@ function fixture() {
   const conn = { peer: 'guest', open: true, send: vi.fn() };
   return { session, provider, plugin, conn };
 }
+it('reports a closed transport and releases a failed outgoing announcement for retry', async () => {
+  const { session, plugin, conn } = fixture();
+  conn.open = false;
+  expect(plugin.broadcastTo(conn)).toBe(false);
+  expect(plugin.outgoing.size).toBe(0);
+  conn.open = true;
+  conn.send.mockImplementationOnce(() => { throw new Error('transport failed'); });
+  expect(() => plugin.broadcastTo(conn)).toThrow('transport failed');
+  expect(plugin.negotiating.size).toBe(0);
+  expect(plugin.connections.size).toBe(0);
+  expect(plugin.broadcastTo(conn)).toBe(true);
+  await session.disposeAsync();
+});
+it('closes a native peer when its answer cannot reach the remote viewer', async () => {
+  const { session, plugin, conn } = fixture();
+  plugin.broadcastTo(conn);
+  const identity = plugin.outgoing.get(conn.peer);
+  ipc.create.mockResolvedValueOnce({ sdp: 'answer' });
+  conn.open = false;
+  await plugin.answer({ ...identity, sdp: 'offer' }, conn);
+  expect(ipc.close).toHaveBeenCalledWith(identity.sessionId, conn.peer, identity.negotiationId);
+  expect(plugin.senders.size).toBe(0);
+  expect(plugin.outgoing.size).toBe(0);
+  await session.disposeAsync();
+});
+it('cleans the receiving peer when transceiver initialization fails', async () => {
+  const { session, plugin, conn } = fixture();
+  const close = vi.spyOn(RTCPeerConnection.prototype, 'close');
+  vi.spyOn(RTCPeerConnection.prototype, 'addTransceiver').mockImplementationOnce(() => { throw new Error('transceiver failed'); });
+  await expect(plugin.receive({ sessionId: 'capture-remote', negotiationId: 'generation' }, conn)).rejects.toThrow('transceiver failed');
+  expect(plugin.receivers.size).toBe(0);
+  expect(close).toHaveBeenCalledTimes(1);
+  await session.disposeAsync();
+});
 it('gates direct stream negotiation by admission and capture identity', async () => {
   const { session, plugin, conn } = fixture();
   expect(plugin.broadcastTo({ ...conn, peer: 'intruder' })).toBe(false);
