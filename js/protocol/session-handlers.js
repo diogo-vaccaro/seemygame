@@ -12,6 +12,7 @@ export function bindSessionMessageHandlers(session, {
   getChatIdentity = () => null,
   isTrustedChatRelayPeer = () => false,
   getDataConnections = () => [],
+  getPeerRole = () => null,
   broadcast = null,
   showToast = () => {},
   getVideoCard = () => null,
@@ -185,9 +186,38 @@ export function bindSessionMessageHandlers(session, {
     for (const id of getVoicePeerIds()) if (sameVoiceChannel(id)) connectVoiceTo(id);
   };
 
+  const resolvePeerRole = (peerId) => {
+    if (!peerId) return null;
+    if (typeof getPeerRole === 'function') {
+      const r = getPeerRole(peerId);
+      if (r) return r;
+    }
+    const connections = typeof getDataConnections === 'function' ? getDataConnections() : [];
+    for (const conn of connections) {
+      if (conn?.peer === peerId) {
+        return conn?.metadata?.role || conn?.role || null;
+      }
+    }
+    return null;
+  };
+
+  const isReadonlyViewer = (connOrPeerId) => {
+    if (!connOrPeerId) return false;
+    if (typeof connOrPeerId === 'string') {
+      const role = resolvePeerRole(connOrPeerId);
+      return role === 'readonly-viewer' || role === 'readonly';
+    }
+    const r = connOrPeerId?.metadata?.role || connOrPeerId?.role || resolvePeerRole(connOrPeerId?.peer);
+    return r === 'readonly-viewer' || r === 'readonly';
+  };
+
   register('VOICE_SIGNAL', (data, sourceConn) => {
     const peerId = data.peerId || sourceConn?.peer;
     if (!peerId || !isAuthorizedPeer(peerId) || (sourceConn?.peer && peerId !== sourceConn.peer)) return;
+    if (isReadonlyViewer(sourceConn) && (data.action === 'VOICE_JOINED' || data.action === 'HOST_VOICE_ACTIVE')) {
+      console.warn(`[Protocol] Sinais de voz rejeitados de espectador somente-leitura: ${peerId}`);
+      return;
+    }
     if (data.action === 'LEAVE') {
       voicePeers.delete(peerId);
       removeVoicePeer(peerId);
@@ -216,6 +246,12 @@ export function bindSessionMessageHandlers(session, {
         if (type !== 'COOP_CONFIG' && type !== 'COOP_SLOTS_UPDATE' && selectedHost && selectedHost !== sourceConn.peer) return;
         (coopController?.handleViewerCoopMessage || handleViewerCoopMessage)(data, sourceConn.peer, getVideoCard(sourceConn.peer), sourceConn);
       } else if (role === 'streamer' || role === 'room') {
+        if (isReadonlyViewer(sourceConn)) {
+          if (type === 'COOP_REQUEST') {
+            try { sourceConn.send?.({ type: 'COOP_DENY', reason: 'readonly_not_permitted' }); } catch (_) {}
+          }
+          return;
+        }
         if (sourceConn?.peer) (coopController?.handleHostCoopMessage || handleHostCoopMessage)(sourceConn.peer, data, sourceConn);
       }
     }, `Session Co-op: ${type}`);
@@ -228,6 +264,7 @@ export function bindSessionMessageHandlers(session, {
     for (const type of [INPUT_KEY, INPUT_MOUSE, INPUT_GAMEPAD, INPUT_RESET]) {
       register(type, (data, sourceConn) => {
         if (session.isDisposed || !sourceConn?.peer) return;
+        if (isReadonlyViewer(sourceConn)) return;
         (coopController?.handleHostCoopMessage || handleHostCoopMessage)(sourceConn.peer, data, sourceConn);
       }, `Session Co-op input: ${type}`);
     }
@@ -244,6 +281,12 @@ export function bindSessionMessageHandlers(session, {
       if (!call || !voiceManager) return false;
       if (typeof isAuthorizedPeer === 'function' && !isAuthorizedPeer(call.peer)) {
         console.warn(`[Voice] Chamada de voz rejeitada de peer não autorizado: ${call.peer}`);
+        try { call.close(); } catch (_) {}
+        return false;
+      }
+      const peerRole = resolvePeerRole(call.peer) || call.metadata?.role;
+      if (peerRole === 'readonly-viewer' || peerRole === 'readonly' || isReadonlyViewer(call.peer)) {
+        console.warn(`[Voice] Chamada de áudio rejeitada de peer somente-leitura: ${call.peer}`);
         try { call.close(); } catch (_) {}
         return false;
       }

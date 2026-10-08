@@ -134,14 +134,26 @@ function submitViewerPin(pin) {
   return false;
 }
 
+function isReadonlyMode() {
+  if (typeof window === 'undefined' || !window.location) return false;
+  const hash = window.location.hash || '';
+  if (hash.includes('readonly=1') || hash.includes('mode=readonly') || hash.includes('watch_mode=readonly') || Boolean(hash.match(/#readonly=([a-zA-Z0-9_-]+)/))) {
+    return true;
+  }
+  const params = new URLSearchParams(window.location.search);
+  return params.get('readonly') === '1' || params.get('mode') === 'readonly' || params.get('watch_mode') === 'readonly';
+}
+
 function getTargetStreamerId() {
   if (typeof window === 'undefined' || !window.location) return null;
   const hash = window.location.hash || '';
+  const readonlyMatch = hash.match(/readonly=([a-zA-Z0-9_-]+)/);
+  if (readonlyMatch && readonlyMatch[1] && readonlyMatch[1] !== '1') return readonlyMatch[1];
   const match = hash.match(/watch=([a-zA-Z0-9_-]+)/);
   if (match && match[1]) return match[1];
 
   const params = new URLSearchParams(window.location.search);
-  return params.get('streamer') || null;
+  return params.get('streamer') || params.get('watch') || params.get('readonly') || null;
 }
 
 async function connectToStreamer(streamerId, pin = null, session = viewerState.session) {
@@ -151,16 +163,19 @@ async function connectToStreamer(streamerId, pin = null, session = viewerState.s
   }
 
   viewerState.targetHostId = streamerId;
-  createPlaceholderCard(streamerId, `Streamer: ${streamerId.slice(0, 8)}`);
-  updateCardStatus(streamerId, 'Conectando ao Streamer...');
+  const isReadonly = isReadonlyMode();
+  viewerState.isReadonly = isReadonly;
+  createPlaceholderCard(streamerId, `Streamer: ${streamerId.slice(0, 8)}${isReadonly ? ' (Somente-Leitura)' : ''}`);
+  updateCardStatus(streamerId, isReadonly ? 'Conectando ao Streamer (Modo Somente-Leitura)...' : 'Conectando ao Streamer...');
 
   const peer = peerInitialization || !viewerState.peer || viewerState.peer.destroyed
     ? await initViewerPeer(session) : viewerState.peer;
   if (session?.isDisposed) return false;
 
+  const assignedRole = isReadonly ? 'readonly-viewer' : 'viewer';
   const conn = peer.connect(streamerId, {
     reliable: true,
-    metadata: { role: 'viewer', pin: pin || '' }
+    metadata: { role: assignedRole, pin: pin || '' }
   });
 
   const previous = watchingHosts.get(streamerId);
@@ -506,6 +521,26 @@ async function initViewerApp(options = {}) {
     });
   }
 
+  const isReadonly = isReadonlyMode();
+  viewerState.isReadonly = isReadonly;
+
+  if (isReadonly) {
+    const origRequestCoop = coopController.requestCoopControl;
+    if (origRequestCoop) {
+      coopController.requestCoopControl = function() {
+        showToast('Modo somente-leitura ativo: controle de jogo não disponível.', 'warning');
+        return false;
+      };
+    }
+    const roleBadge = document.querySelector('.role-badge.viewer');
+    if (roleBadge) {
+      roleBadge.textContent = 'Modo Somente-Leitura (Passivo)';
+      roleBadge.title = 'Entrada como espectador passivo sem microfone ou controles de jogo';
+    }
+    const ctrlBtn = document.getElementById('open-controller-lab-btn');
+    if (ctrlBtn) ctrlBtn.style.display = 'none';
+  }
+
   // Instancia controlador da interface Discord (Chat, Voz, Emojis, Sons)
   if (typeof DiscordUIController !== 'undefined') {
     const discordUI = new DiscordUIController({
@@ -529,6 +564,10 @@ async function initViewerApp(options = {}) {
         }
       },
       onJoinVoice: async () => {
+        if (viewerState.isReadonly) {
+          showToast('Modo somente-leitura: transmissão de microfone desativada.', 'info');
+          return;
+        }
         try {
           const stream = await voiceManager.joinVoice({ peerId: viewerState.peer?.id, name: 'Espectador', role: 'viewer' });
           if (!stream || !voiceManager.isInVoice || session.isDisposed) return;
