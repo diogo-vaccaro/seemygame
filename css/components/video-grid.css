@@ -820,3 +820,151 @@ video {
   pointer-events: none;
   animation: pulse 1s infinite;
 }
+
+/* ==========================================
+   Suíte de Layouts de Sala (Grade, Destaque e Cinema)
+   ========================================== */
+
+/* Modo Destaque (Focus) */
+.video-grid.layout-focus {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 12px !important;
+  overflow-y: auto !important;
+}
+
+.video-grid.layout-focus .video-card.focused {
+  flex: 1 1 auto !important;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-height: min(60vh, 600px) !important;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45) !important;
+  border-color: color-mix(in srgb, var(--accent) 60%, transparent) !important;
+}
+
+.video-grid.layout-focus .video-card.thumbnail-mode {
+  flex: 0 0 auto !important;
+  height: 120px !important;
+  max-height: 120px !important;
+  width: 200px !important;
+  max-width: 200px !important;
+  cursor: pointer !important;
+  opacity: 0.75;
+  transition: transform 0.15s ease, opacity 0.15s ease, border-color 0.15s ease;
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+.video-grid.layout-focus .video-card.thumbnail-mode:hover {
+  opacity: 1 !important;
+  transform: translateY(-2px);
+  border-color: var(--accent);
+}
+
+.video-grid.layout-focus .video-card.thumbnail-mode .video-header-bar,
+.video-grid.layout-focus .video-card.thumbnail-mode .video-overlay-bar {
+  display: none !important;
+}
+
+/* Modo Cinema / Hiperfoco */
+.video-grid.layout-cinema {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: 100vw !important;
+  max-height: 100vh !important;
+  z-index: 1000 !important;
+  background: #000 !important;
+  margin: 0 !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+
+.video-grid.layout-cinema .video-card.cinema-mode {
+  position: absolute !important;
+  inset: 0 !important;
+  width: 100% !important;
+  height: 100% !important;
+  max-width: 100% !important;
+  max-height: 100% !important;
+  border: none !important;
+  border-radius: 0 !important;
+  background: #000 !important;
+}
+
+.video-grid.layout-cinema .video-card.cinema-mode .video-wrapper {
+  height: 100% !important;
+  width: 100% !important;
+}
+
+.video-grid.layout-cinema .video-card.cinema-mode video {
+  object-fit: contain !important;
+  height: 100% !important;
+  width: 100% !important;
+}
+
+/* Controles Flutuantes do Modo Cinema */
+.cinema-floating-controls {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 1100;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: rgba(15, 17, 23, 0.75);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 24px;
+  padding: 6px 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.6);
+  opacity: 0.35;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+}
+
+.cinema-floating-controls:hover {
+  opacity: 1;
+  transform: translateY(-1px);
+}
+
+.cinema-ctrl-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: #fff;
+  border-radius: 16px;
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+
+.cinema-ctrl-btn:hover {
+  background: rgba(255, 255, 255, 0.18);
+  border-color: rgba(255, 255, 255, 0.3);
+}
+
+.cinema-ctrl-btn.cinema-exit-btn {
+  background: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.4);
+  color: #fca5a5;
+}
+
+.cinema-ctrl-btn.cinema-exit-btn:hover {
+  background: rgba(239, 68, 68, 0.4);
+  border-color: #ef4444;
+  color: #fff;
+}
+
+/* Chat em Overlay no Modo Cinema */
+.discord-drawer.cinema-open {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  height: 100vh !important;
+  z-index: 1050 !important;
+  background: rgba(18, 20, 29, 0.88) !important;
+  backdrop-filter: blur(16px) !important;
+  border-right: 1px solid rgba(255, 255, 255, 0.12) !important;
+  box-shadow: 8px 0 32px rgba(0, 0, 0, 0.5) !important;
+}
