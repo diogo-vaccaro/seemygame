@@ -273,6 +273,25 @@ export const QUALITY_PROFILES = {
     height: 1080,
     fps: 60,
     bitrate: 12000000
+  },
+  lanFhd: {
+    id: 'lanFhd',
+    label: 'Modo LAN (1080p / 60 FPS - 30 Mbps)',
+    width: 1920,
+    height: 1080,
+    fps: 60,
+    bitrate: 30000000,
+    isLan: true
+  },
+  lanFhd120: {
+    id: 'lanFhd120',
+    label: 'Modo LAN Ultra (1080p / 120 FPS - 45 Mbps)',
+    width: 1920,
+    height: 1080,
+    fps: 120,
+    bitrate: 45000000,
+    experimental: true,
+    isLan: true
   }
 };
 

@@ -12,7 +12,13 @@ export function bindStreamingQuality(session, { getStream, getCalls, getProvider
       const settings = readCaptureSettings();
       if (id === 'quality-preset') {
         const profile = QUALITY_PROFILES[document.getElementById('quality-preset')?.value];
-        if (profile) { settings.bitrateKbps = profile.bitrate / 1000; const slider = document.getElementById('bitrate-slider'); if (slider) slider.value = String(settings.bitrateKbps); }
+        if (profile) {
+          settings.bitrateKbps = profile.bitrate / 1000;
+          const slider = document.getElementById('bitrate-slider');
+          if (slider) slider.value = String(settings.bitrateKbps);
+          const display = document.getElementById('bitrate-display');
+          if (display) display.textContent = `${(profile.bitrate / 1000000).toFixed(1)} Mbps`;
+        }
       }
       pending = pending.catch(() => {}).then(async () => {
         if (session.isDisposed || !getStream()) return;
