@@ -30,9 +30,9 @@ const HOST = process.env.HOST || '127.0.0.1';
 const PUBLIC_PAGES = new Set(['index.html', 'lobby.html', 'room.html', 'streamer.html', 'viewer.html', 'test-audio.html']);
 const PUBLIC_DIRECTORIES = new Set(['css', 'js']);
 
-const server = http.createServer((req, res) => {
+const server = http.createServer(async (req, res) => {
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', '*');
 
   if (req.method === 'OPTIONS') {
@@ -50,6 +50,28 @@ const server = http.createServer((req, res) => {
   } catch (_) {
     res.writeHead(400, { 'Content-Type': 'text/plain; charset=utf-8' });
     res.end('Bad Request: Invalid URI');
+    return;
+  }
+
+  if (pathname === '/api/rooms') {
+    try {
+      const { default: roomsHandler } = await import('../api/rooms.js');
+      await roomsHandler(req, res);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
+    return;
+  }
+
+  if (pathname === '/api/turn') {
+    try {
+      const { default: turnHandler } = await import('../api/turn.js');
+      await turnHandler(req, res);
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: err.message }));
+    }
     return;
   }
 

@@ -9,6 +9,16 @@ export async function startAssetServer({ root, fixtures = {}, port = 0 } = {}) {
   const server = http.createServer(async (request, response) => {
     try {
       const pathname = decodeURIComponent(new URL(request.url, 'http://localhost').pathname);
+      if (pathname === '/api/rooms') {
+        const { default: roomsHandler } = await import('../../../api/rooms.js');
+        await roomsHandler(request, response);
+        return;
+      }
+      if (pathname === '/api/turn') {
+        const { default: turnHandler } = await import('../../../api/turn.js');
+        await turnHandler(request, response);
+        return;
+      }
       if (Object.hasOwn(fixtures, pathname)) {
         response.setHeader('Content-Type', mime[path.extname(pathname)] || 'text/html');
         response.end(fixtures[pathname]);
