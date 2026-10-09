@@ -107,27 +107,51 @@ async function kvCommand(command) {
       },
       body: JSON.stringify(command)
     });
-    if (!res.ok) return null;
+    if (!res.ok) throw new DirectoryStorageError();
     const json = await res.json();
+    if (json.error || !Object.hasOwn(json, 'result')) throw new DirectoryStorageError();
     return json.result;
   } catch (err) {
-    console.warn('[Directory KV] Erro na requisição Redis REST:', err);
-    return null;
+    throw new DirectoryStorageError();
   }
 }
 
-// Operações de Storage Híbridas (KV REST + Fallback In-Memory)
+class DirectoryStorageError extends Error {}
+
+// Check ownership and mutate both Redis keys in a single operation.
+const SAVE_ROOM_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if raw then
+  local existing = cjson.decode(raw)
+  local secret = existing.secretKey
+  if type(secret) == 'string' and secret ~= '' and secret ~= ARGV[5] then return 0 end
+end
+redis.call('SET', KEYS[1], ARGV[1], 'EX', ARGV[4])
+redis.call('ZADD', KEYS[2], ARGV[3], ARGV[2])
+return 1
+`;
+const DELETE_ROOM_SCRIPT = `
+local raw = redis.call('GET', KEYS[1])
+if not raw then return 0 end
+local existing = cjson.decode(raw)
+local secret = existing.secretKey
+if type(secret) == 'string' and secret ~= '' and secret ~= ARGV[2] then return 0 end
+redis.call('DEL', KEYS[1])
+redis.call('ZREM', KEYS[2], ARGV[1])
+return 1
+`;
+
+// Configured Redis failures are explicit; memory is only used without Redis.
 async function saveRoomToStorage(room) {
   const kv = getKvConfig();
   const expiresAt = Date.now() + ROOM_TTL_SECONDS * 1000;
   const roomToStore = { ...room, expiresAt };
 
   if (kv) {
-    try {
-      await kvCommand(['SET', `smg:room:${room.id}`, JSON.stringify(roomToStore), 'EX', ROOM_TTL_SECONDS]);
-      await kvCommand(['ZADD', 'smg:rooms:active', expiresAt, room.id]);
-      return true;
-    } catch (_) {}
+    const result = await kvCommand(['EVAL', SAVE_ROOM_SCRIPT, 2, `smg:room:${room.id}`, 'smg:rooms:active',
+      JSON.stringify(roomToStore), room.id, expiresAt, ROOM_TTL_SECONDS, room.secretKey || '']);
+    if (result !== 0 && result !== 1) throw new DirectoryStorageError();
+    return result === 1;
   }
 
   // Fallback in-memory
@@ -137,6 +161,8 @@ async function saveRoomToStorage(room) {
       if (item.expiresAt <= now) memoryRooms.delete(key);
     }
   }
+  const existing = memoryRooms.get(room.id);
+  if (existing?.expiresAt > Date.now() && existing.secretKey && existing.secretKey !== room.secretKey) return false;
   memoryRooms.set(room.id, roomToStore);
   return true;
 }
@@ -146,28 +172,16 @@ async function getRoomsFromStorage() {
   const kv = getKvConfig();
 
   if (kv) {
-    try {
-      // Remove salas expiradas do Sorted Set
-      await kvCommand(['ZREMRANGEBYSCORE', 'smg:rooms:active', '-inf', now]);
-      const roomIds = await kvCommand(['ZRANGE', 'smg:rooms:active', 0, -1]);
-      if (Array.isArray(roomIds) && roomIds.length > 0) {
-        const mgetKeys = roomIds.map((id) => `smg:room:${id}`);
-        const rawRooms = await kvCommand(['MGET', ...mgetKeys]);
-        if (Array.isArray(rawRooms)) {
-          return rawRooms
-            .filter(Boolean)
-            .map((raw) => {
-              try {
-                return typeof raw === 'string' ? JSON.parse(raw) : raw;
-              } catch (_) {
-                return null;
-              }
-            })
-            .filter((r) => r && r.expiresAt > now);
-        }
-      }
-      return [];
-    } catch (_) {}
+    await kvCommand(['ZREMRANGEBYSCORE', 'smg:rooms:active', '-inf', now]);
+    const roomIds = await kvCommand(['ZRANGE', 'smg:rooms:active', 0, -1]);
+    if (!Array.isArray(roomIds)) throw new DirectoryStorageError();
+    if (roomIds.length === 0) return [];
+    const rawRooms = await kvCommand(['MGET', ...roomIds.map(id => `smg:room:${id}`)]);
+    if (!Array.isArray(rawRooms)) throw new DirectoryStorageError();
+    return rawRooms.filter(Boolean).map(raw => {
+      try { return typeof raw === 'string' ? JSON.parse(raw) : raw; }
+      catch (_) { return null; }
+    }).filter(room => room && room.expiresAt > now);
   }
 
   // Fallback in-memory
@@ -186,26 +200,15 @@ async function deleteRoomFromStorage(roomId, secretKey = null) {
   const kv = getKvConfig();
 
   if (kv) {
-    try {
-      if (secretKey) {
-        const raw = await kvCommand(['GET', `smg:room:${roomId}`]);
-        if (raw) {
-          const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw;
-          if (parsed.secretKey && parsed.secretKey !== secretKey) {
-            return false;
-          }
-        }
-      }
-      await kvCommand(['DEL', `smg:room:${roomId}`]);
-      await kvCommand(['ZREM', 'smg:rooms:active', roomId]);
-      return true;
-    } catch (_) {}
+    const result = await kvCommand(['EVAL', DELETE_ROOM_SCRIPT, 2, `smg:room:${roomId}`, 'smg:rooms:active', roomId, secretKey || '']);
+    if (result !== 0 && result !== 1) throw new DirectoryStorageError();
+    return result === 1;
   }
 
   // Fallback in-memory
   const existing = memoryRooms.get(roomId);
   if (existing) {
-    if (secretKey && existing.secretKey && existing.secretKey !== secretKey) {
+    if (existing.secretKey && existing.secretKey !== secretKey) {
       return false;
     }
     memoryRooms.delete(roomId);
@@ -259,7 +262,7 @@ function ensureResponseHelpers(res) {
 /**
  * Handler Serverless principal para /api/rooms.
  */
-export default async function handler(req, res) {
+async function handleRequest(req, res) {
   ensureResponseHelpers(res);
 
   // Headers de CORS e Cache
@@ -370,7 +373,7 @@ export default async function handler(req, res) {
     const existingList = await getRoomsFromStorage();
     const existing = existingList.find((r) => r.id === id);
 
-    if (existing && existing.secretKey && body.secretKey && existing.secretKey !== body.secretKey) {
+    if (existing && existing.secretKey && existing.secretKey !== body.secretKey) {
       return res.status(403).json({ error: 'Chave de controle da sala não autorizada.' });
     }
 
@@ -388,7 +391,9 @@ export default async function handler(req, res) {
       updatedAt: now
     };
 
-    await saveRoomToStorage(roomRecord);
+    if (!await saveRoomToStorage(roomRecord)) {
+      return res.status(403).json({ error: 'Chave de controle da sala não autorizada.' });
+    }
 
     return res.status(200).json({
       ok: true,
@@ -410,4 +415,13 @@ export default async function handler(req, res) {
   }
 
   return res.status(405).json({ error: 'Method Not Allowed' });
+}
+
+export default async function handler(req, res) {
+  try {
+    return await handleRequest(req, res);
+  } catch (error) {
+    if (!(error instanceof DirectoryStorageError)) throw error;
+    return res.status(503).json({ error: 'Diretório temporariamente indisponível. Tente novamente.' });
+  }
 }

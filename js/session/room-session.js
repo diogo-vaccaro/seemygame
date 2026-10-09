@@ -264,7 +264,7 @@ async function setupRoomSession(peerId, session = roomState.session) {
     }
     if (roomState.publisher?.isActive) {
       roomState.publisher.updateMetrics({
-        memberCount: (rm.members?.size || 0) + 1,
+        memberCount: rm.members?.size || 1,
         isPrivate: Boolean(rm.roomPin)
       });
     }
@@ -1079,7 +1079,7 @@ async function initRoomApp(options = {}) {
           game: game || 'Geral',
           isPrivate: Boolean(roomPin),
           hasPlayer2Slot: Boolean(player2Slot),
-          memberCount: (rm.members?.size || 0) + 1,
+          memberCount: rm.members?.size || 1,
           maxMembers: 8
         });
       } else if (roomState.publisher) {
@@ -1183,6 +1183,7 @@ async function initRoomApp(options = {}) {
     getPeerId: () => roomState.peer?.id || 'room-member',
     getDisplayName: () => roomState.userName,
     isHost: () => Boolean(roomState.roomManager?.isMaster || session?.getRole?.() === 'host'),
+    getCoordinatorPeerId: () => roomState.roomManager?.masterPeerId || null,
     getActiveVideoStream: () => roomState.localStream || [...roomState.remoteStreams.values()].find(entry => entry.stream)?.stream,
     getVoiceStreams: () => ({
       localMic: voiceManager.localStream,

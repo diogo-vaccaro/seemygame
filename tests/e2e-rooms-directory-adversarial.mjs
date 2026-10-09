@@ -182,6 +182,8 @@ try {
   }, { timeout: 10000 });
 
   // Com o Host e o Convidado na sala, o card deve exibir 2/8 membros
+  await wait(hostPage, async () => (await import('/js/entries/room-entry.js')).roomState.roomManager.members.size === 2);
+  await hostPage.evaluate(async () => (await import('/js/entries/room-entry.js')).roomState.publisher.sendHeartbeat());
   await observerPage.locator('#directory-refresh-btn').click();
   await waitForAsync(async () => {
     const membersEl = observerPage.locator('.dir-room-card[data-room-id="e2e-pin-challenge"] .dir-members-count');
