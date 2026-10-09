@@ -1,6 +1,7 @@
 import { bindCaptureSettings, bindQualityCapabilities, isNativeCaptureProvider, readCaptureSettings } from '../capture/settings.js';
 import { createInitialCodecTransform } from '../streaming/codecs.js';
 import { createQualityController } from '../streaming/adaptation.js';
+import { RoomRelayTransport } from '../room/relay-transport.js';
 import { captureVideoConstraints, videoScaleForProfile } from '../streaming/quality.js';
 import { bindStreamingQuality } from '../streaming/settings-controller.js';
 import { initGreenRoomLobby as mountGreenRoomLobby } from '../app/green-room.js';
@@ -28,9 +29,6 @@ import {
   sanitizeRoomId, 
   getRoomMasterPeerId 
 } from '../room.js';
-import { 
-  RelayManager 
-} from '../relay.js';
 import { VoiceManager } from '../voice.js';
 import { ChatManager } from '../chat.js';
 import { 
@@ -89,6 +87,7 @@ const roomState = {
   peer: null,
   roomManager: null,
   relayManager: null,
+  relayTransport: null,
   discordUI: null,
   currentRoomId: 'general',
   currentPin: null,
@@ -226,10 +225,13 @@ async function setupRoomSession(peerId, session = roomState.session) {
   }
 
   // Instancia RelayManager para escalabilidade em árvore
-  roomState.relayManager = new RelayManager({
-    originPeerId: isMaster ? peerId : null,
-    maxDirectViewers: 8
+  roomState.relayTransport = new RoomRelayTransport({
+    session, room: rm, state: roomState,
+    sendDirect: target => sendRoomStream(target, rm.meshConnections.get(target), rm, session)
   });
+  roomState.relayManager = roomState.relayTransport.tree;
+  const relayTransport = roomState.relayTransport;
+  session?.registerCleanup(() => relayTransport.dispose());
 
   if (isMaster) {
     let publish = false;
@@ -295,6 +297,7 @@ async function setupRoomSession(peerId, session = roomState.session) {
 
   rm.on('streamUnpublished', ({ peerId: streamerPeerId, member }) => {
     if (streamerPeerId !== rm.myPeerId) {
+      roomState.relayTransport?.stopSource(streamerPeerId);
       showToast(`Transmissão de ${member?.name || streamerPeerId.slice(0, 6)} encerrada.`, 'info');
       removeVideoCard(streamerPeerId);
       (session?.eventBus || globalBus).emit('room:streamUnpublished', { peerId: streamerPeerId, member });
@@ -331,6 +334,7 @@ async function setupRoomSession(peerId, session = roomState.session) {
 
   rm.on('memberLeft', (member) => {
     if (member && member.peerId) {
+      roomState.relayTransport?.remove(member.peerId);
       closeRoomScreenCalls(member.peerId, session);
       // ROOM_MEMBER_LEFT can remove the map entry before DataConnection's
       // close event, so that event's current-connection guard may ignore it.
@@ -522,6 +526,7 @@ function attachRoomDataConnection(conn, rm, session, { requestAdmission = false,
     if (!isCurrent()) return;
     const handled = rm.handleRoomMessage(conn.peer, message, conn);
     if (!handled && rm.isPeerAuthorized(conn.peer)) {
+      if (roomState.relayTransport?.handle(message, conn)) return;
       if (message?.type === 'REQUEST_STREAM') {
         if (roomState.localStream && conn.open) {
           const existingCall = roomState.screenCalls.get(conn.peer);
@@ -576,6 +581,11 @@ function handleRoomMediaCall(call, rm, session) {
     roomState.messageHandlers?.answerVoiceCall(call);
     return;
   }
+  if (roomState.relayTransport && !roomState.relayTransport.accepts(call)) {
+    try { call.close(); } catch (_) {}
+    return;
+  }
+  const hostId = call.metadata?.type === 'RELAY_STREAM' ? call.metadata.hostPeerId : call.peer;
   // PeerJS applies the remote offer asynchronously. Intercept createAnswer before answering.
   const pc = call.peerConnection;
   if (pc?.createAnswer) {
@@ -586,29 +596,32 @@ function handleRoomMediaCall(call, rm, session) {
     };
   }
   call.answer();
-  const previousCall = roomState.remoteStreams.get(call.peer)?.call;
+  const previousEntry = roomState.remoteStreams.get(hostId);
+  const previousCall = previousEntry?.call;
+  // Publish ownership before closing the old path so its events cannot tear down the replacement.
+  roomState.remoteStreams.set(hostId, { call, stream: null });
   if (previousCall) {
-    releaseRoomRemoteStream(call.peer, previousCall, session);
     try { previousCall.close(); } catch (_) {}
+    previousEntry.stream?.getTracks().forEach(track => { try { track.stop(); } catch (_) {} });
   }
-  roomState.remoteStreams.set(call.peer, { call, stream: null });
   call.on('stream', (stream) => {
-    if (session?.isDisposed || !rm.isPeerAuthorized(call.peer) || roomState.remoteStreams.get(call.peer)?.call !== call) return;
-    roomState.remoteStreams.set(call.peer, { call, stream });
-    startStatsMonitor(call.peer, call.peerConnection, false);
-    const member = rm.members.get(call.peer);
-    hideCardLoading(call.peer);
-    addOrUpdateVideoCard({ session, audioScope: roomState.session?.audioScope, peerId: call.peer, stream, label: member?.name || `Amigo ${call.peer.slice(-4)}`, isLocal: false,
+    if (session?.isDisposed || !rm.isPeerAuthorized(call.peer) || roomState.remoteStreams.get(hostId)?.call !== call) return;
+    roomState.remoteStreams.set(hostId, { call, stream });
+    roomState.relayTransport?.received(hostId);
+    startStatsMonitor(hostId, call.peerConnection, false);
+    const member = rm.members.get(hostId);
+    hideCardLoading(hostId);
+    addOrUpdateVideoCard({ session, audioScope: roomState.session?.audioScope, peerId: hostId, stream, label: member?.name || `Amigo ${hostId.slice(-4)}`, isLocal: false,
       onClipClick: sourceId => roomState.features?.clipEditor?.exportClip(sourceId),
       onCoopClick: peerId => toggleCoopCardControl(coopController, peerId, rm.meshConnections.get(peerId)) });
-    session?.eventBus.emit('stream:received', { hostId: call.peer, stream });
+    session?.eventBus.emit('stream:received', { hostId, stream });
   });
   if (pc) {
     pc.addEventListener?.('iceconnectionstatechange', () => {
       const state = pc.iceConnectionState;
       console.log(`[Room Media Receiver] ICE com ${call.peer}: ${state}`);
       if (state === 'failed') {
-        const conn = rm.meshConnections.get(call.peer);
+        const conn = rm.meshConnections.get(hostId);
         if (conn && conn.open) {
           console.warn(`[Room Media Receiver] ICE falhou com ${call.peer}. Solicitando novo stream...`);
           try { sendSessionMessage(session, conn, { type: 'REQUEST_STREAM' }); } catch (_) {}
@@ -617,7 +630,7 @@ function handleRoomMediaCall(call, rm, session) {
     });
   }
   let unregisterCleanup;
-  const release = () => { unregisterCleanup?.(); releaseRoomRemoteStream(call.peer, call, session); };
+  const release = () => { unregisterCleanup?.(); releaseRoomRemoteStream(hostId, call, session); };
   unregisterCleanup = session?.registerCleanup(() => { release(); try { call.close(); } catch (_) {} });
   call.on('close', release);
   call.on('error', () => { release(); try { call.close(); } catch (_) {} });
@@ -660,6 +673,7 @@ function sendRoomStream(memberId, conn, rm, session) {
       return;
     }
   }
+  if (roomState.relayTransport && !roomState.relayTransport.allocate(memberId)) return;
   const settings = roomState.captureSettings || readCaptureSettings();
   const call = roomState.peer?.call(memberId, roomState.localStream, {
     metadata: { type: 'ROOM_STREAM', name: rm.userName },
@@ -667,9 +681,6 @@ function sendRoomStream(memberId, conn, rm, session) {
   });
   if (!call) return;
   roomState.screenCalls.set(memberId, call);
-  if (roomState.relayManager) {
-    roomState.relayManager.registerViewer(memberId, { rtt: 50 });
-  }
   hookPeerConnectionSdp(
     call.peerConnection,
     () => settings.bitrateKbps * 1000,
@@ -716,11 +727,11 @@ function sendRoomStream(memberId, conn, rm, session) {
   });
   let unregisterCleanup;
   const release = () => {
-    roomState.relayManager?.unregisterViewer(memberId);
     stopTuning();
     quality.dispose();
     unregisterCleanup?.();
     if (roomState.screenCalls.get(memberId) === call) {
+      roomState.relayManager?.unregisterViewer(memberId);
       stopStatsMonitor(`send-${memberId}`);
       roomState.screenCalls.delete(memberId);
     }
@@ -851,6 +862,7 @@ function stopRoomCapture(rm, session) {
   roomState.captureEpoch = (roomState.captureEpoch || 0) + 1;
   if (roomState.captureProvider) { const provider = roomState.captureProvider; roomState.captureProvider = null; const pending = provider.stop(); session?.registerCleanup(() => pending); }
   if (!roomState.localStream) return;
+  roomState.relayTransport?.resetLocal();
   roomState.localStream.getTracks?.().forEach((track) => { try { track.stop(); } catch (_) {} });
   [...roomState.screenCalls.values()].forEach((call) => { try { call.close(); } catch (_) {} });
   roomState.screenCalls.clear();
@@ -1234,6 +1246,7 @@ async function initRoomApp(options = {}) {
       roomState.peer = null;
       roomState.roomManager = null;
       roomState.relayManager = null;
+      roomState.relayTransport = null;
       roomState.discordUI = null;
       roomState.coordinatorConn = null;
       roomState.screenCalls.clear();

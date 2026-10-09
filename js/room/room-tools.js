@@ -15,6 +15,8 @@ import { pollManager } from './poll-manager.js';
 import { multitrackRecorder } from './multitrack-recorder.js';
 import { roomLayoutController } from './room-layout.js';
 import { notepadManager } from './notepad.js';
+import { createRoomToolsSuite } from './tools/index.js';
+import { SnippetsModalUI, TasksModalUI, HandsModalUI, WatchModalUI, TranscriptModalUI } from '../ui/room-tools/index.js';
 
 function getVisibleRoomVideo() {
   const videos = [
@@ -36,6 +38,13 @@ export class RoomToolsController {
     this.getDisplayName = null;
     this.getActiveVideoStream = null;
     this.getVoiceStreams = null;
+
+    this.toolsSuite = null;
+    this.snippetsUI = null;
+    this.tasksUI = null;
+    this.handsUI = null;
+    this.watchUI = null;
+    this.transcriptUI = null;
 
     this.isMenuOpen = false;
     this.menuEl = null;
@@ -102,6 +111,25 @@ export class RoomToolsController {
       }
     });
 
+    // Inicializa a suíte colaborativa compartilhada da sala
+    const resolveIsReadonly = () => Boolean(
+      (typeof options.isReadonly === 'function' ? options.isReadonly() : options.isReadonly) ||
+      session?.isReadonly ||
+      session?.role === 'readonly-viewer' ||
+      session?.role === 'readonly'
+    );
+
+    this.toolsSuite = options.toolsSuite || createRoomToolsSuite({
+      isHost: resolveIsHost,
+      getLocalPeerId: getPeerId,
+      getDisplayName: getDisplayName,
+      getCoordinatorPeerId,
+      getIsReadonly: resolveIsReadonly,
+      broadcast,
+      roomEpoch: session?.roomState?.currentRoomId || 'default-room'
+    });
+    this.cleanups.push(() => this.toolsSuite.dispose());
+
     // Registrar handlers no session.dispatcher se disponível
     if (session?.dispatcher) {
       const d = session.dispatcher;
@@ -115,7 +143,9 @@ export class RoomToolsController {
           d.register(type, (data, source) => pollManager.handleRemoteMessage(data, source?.peer))),
         d.register('NOTE_UPDATE', (data, source) => notepadManager.handleRemoteMessage(data, source?.peer)),
         d.register('NOTE_REQUEST_SYNC', (data, source) => notepadManager.handleRemoteMessage(data, source?.peer)),
-        d.register('NOTE_SYNC', (data, source) => notepadManager.handleRemoteMessage(data, source?.peer))
+        d.register('NOTE_SYNC', (data, source) => notepadManager.handleRemoteMessage(data, source?.peer)),
+        ...['TOOL_PROPOSAL', 'TOOL_CONFIRM', 'TOOL_REJECT', 'TOOL_REQUEST_SYNC', 'TOOL_SYNC'].map(type =>
+          d.register(type, (data, source) => this.toolsSuite?.service?.handleRemoteMessage(data, source?.peer, source)))
       ];
       this.cleanups.push(() => unsubs.forEach(u => u()));
     }
@@ -178,6 +208,11 @@ export class RoomToolsController {
         this.closePollModal();
         this.closeMultitrackModal();
         notepadManager.closeModal();
+        this.snippetsUI?.close();
+        this.tasksUI?.close();
+        this.handsUI?.close();
+        this.watchUI?.close();
+        this.transcriptUI?.close();
       } else if (!inInput && e.key.toLowerCase() === 'c' && !e.ctrlKey && !e.altKey && !e.metaKey) {
         this.triggerClip();
       }
@@ -196,6 +231,29 @@ export class RoomToolsController {
     // 5. Layouts e Bloco de Notas
     roomLayoutController.bindDOM();
     notepadManager.mountModal();
+
+    // 6. Novas Ferramentas Colaborativas (Snippets, Tasks, Hands, Watch, Transcrição)
+    if (this.toolsSuite) {
+      this.snippetsUI = new SnippetsModalUI(this.toolsSuite.snippets);
+      this.tasksUI = new TasksModalUI(this.toolsSuite.tasks);
+      this.handsUI = new HandsModalUI(this.toolsSuite.hands);
+      this.watchUI = new WatchModalUI(this.toolsSuite.watchTogether);
+      this.transcriptUI = new TranscriptModalUI(this.toolsSuite.transcript);
+
+      this.snippetsUI.mount();
+      this.tasksUI.mount();
+      this.handsUI.mount();
+      this.watchUI.mount();
+      this.transcriptUI.mount();
+
+      this.cleanups.push(() => {
+        this.snippetsUI?.destroy();
+        this.tasksUI?.destroy();
+        this.handsUI?.destroy();
+        this.watchUI?.destroy();
+        this.transcriptUI?.destroy();
+      });
+    }
   }
 
   toggleMenu() {
@@ -290,6 +348,41 @@ export class RoomToolsController {
             <small>Efeitos de áudio e memes para o canal de voz</small>
           </div>
         </button>
+        <button type="button" class="room-tool-item" data-action="snippets">
+          <span class="tool-icon">📋</span>
+          <div class="tool-info">
+            <strong>Snippets de Código</strong>
+            <small>Compartilhe binds, macros e scripts com lease</small>
+          </div>
+        </button>
+        <button type="button" class="room-tool-item" data-action="tasks">
+          <span class="tool-icon">✅</span>
+          <div class="tool-info">
+            <strong>Checklist da Sala</strong>
+            <small>Organize objetivos e tarefas de co-op</small>
+          </div>
+        </button>
+        <button type="button" class="room-tool-item" data-action="hands">
+          <span class="tool-icon">✋</span>
+          <div class="tool-info">
+            <strong>Fila de Fala & Mãos</strong>
+            <small>Peça a palavra e gerencie moderação de voz</small>
+          </div>
+        </button>
+        <button type="button" class="room-tool-item" data-action="watch">
+          <span class="tool-icon">🍿</span>
+          <div class="tool-info">
+            <strong>Watch Together</strong>
+            <small>Assista a YouTube e vídeos gravados em sincronia</small>
+          </div>
+        </button>
+        <button type="button" class="room-tool-item" data-action="transcript">
+          <span class="tool-icon">💬</span>
+          <div class="tool-info">
+            <strong>Legendas & Transcrição</strong>
+            <small>Legendas ao vivo e exportação SRT/VTT</small>
+          </div>
+        </button>
       </div>
     `;
 
@@ -349,6 +442,21 @@ export class RoomToolsController {
         break;
       case 'soundboard':
         document.getElementById('toggle-soundboard-btn')?.click();
+        break;
+      case 'snippets':
+        this.snippetsUI?.open();
+        break;
+      case 'tasks':
+        this.tasksUI?.open();
+        break;
+      case 'hands':
+        this.handsUI?.open();
+        break;
+      case 'watch':
+        this.watchUI?.open();
+        break;
+      case 'transcript':
+        this.transcriptUI?.open();
         break;
     }
   }

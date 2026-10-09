@@ -143,6 +143,7 @@ export class NotepadManager {
     if (!data || typeof data !== 'object') return;
 
     if (data.type === 'NOTE_UPDATE') {
+      if (!this.isHost) return;
       const incomingText = String(data.text ?? '');
       const author = String(data.authorName || 'Amigo').slice(0, 32);
 
@@ -163,11 +164,6 @@ export class NotepadManager {
             lastModified: this.lastModified
           });
         }
-      } else {
-        this.text = incomingText;
-        this.lastAuthor = author;
-        this.lastModified = Date.now();
-        this._notifyChange();
       }
     } else if (data.type === 'NOTE_REQUEST_SYNC') {
       if (this.isHost && this.broadcast) {

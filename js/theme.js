@@ -2,7 +2,8 @@
 (() => {
   const storageKey = 'smg-theme';
   const root = document.documentElement;
-  const validTheme = value => value === 'light' || value === 'dark';
+  const OFFICIAL_THEMES = ['dark', 'light', 'cyberpunk', 'midnight', 'forest', 'sunset'];
+  const validTheme = value => OFFICIAL_THEMES.includes(value);
   let initialTheme = 'dark';
   try {
     const saved = localStorage.getItem(storageKey);

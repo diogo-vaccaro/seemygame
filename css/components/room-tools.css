@@ -439,3 +439,43 @@ body.streamer-mode-active .qr-blur-protected {
   font-size: 13.5px;
   font-weight: 600;
 }
+
+/* 7. Novas Ferramentas Colaborativas (Snippets, Checklist, Hands, Watch, Transcrição) */
+.badge-status-p2p {
+  box-shadow: 0 0 8px rgba(56, 189, 248, 0.2);
+}
+
+.snippets-modal-content,
+.tasks-modal-content,
+.hands-modal-content,
+.watch-modal-content,
+.transcript-modal-content {
+  animation: roomToolModalPop 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes roomToolModalPop {
+  from { opacity: 0; transform: scale(0.97) translateY(8px); }
+  to { opacity: 1; transform: scale(1) translateY(0); }
+}
+
+.snippet-list-item:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+}
+
+.task-card-item {
+  transition: all 0.15s ease;
+}
+
+.task-card-item:hover {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+
+#room-captions-overlay {
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+  animation: captionFadeIn 0.2s ease-out;
+}
+
+@keyframes captionFadeIn {
+  from { opacity: 0; transform: translate(-50%, 6px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}

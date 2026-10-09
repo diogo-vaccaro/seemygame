@@ -6,7 +6,8 @@ import {
   createSoundboardPlugin,
   createTacticalPingPlugin,
   createReactionsPlugin,
-  createClippingPlugin
+  createClippingPlugin,
+  createRoomToolsPlugin
 } from './factories.js';
 import { bindWhiteboardUI } from '../whiteboard-ui.js';
 import { bindClipEditor } from '../clipping/editor-controller.js';
@@ -39,6 +40,9 @@ export function registerSessionFeatures(session, {
   if (includeClipping) plugins.push(createClippingPlugin({ recorder: new ClipRecorderRegistry({ audioScope: session.audioScope,
     getNativeContext: sourceId => nativeReplayContext(sourceId, getCaptureProvider())
   }) }));
+  if (role === 'room') {
+    plugins.push(createRoomToolsPlugin());
+  }
   plugins.push(new NativeMediaPlugin({ session, getProvider: getCaptureProvider, isAuthorized: isAuthorizedPeer,
     onClip: sourceId => session.state.features?.clipEditor?.exportClip(sourceId),
     onCoop: peerId => toggleCoopCardControl(session.services?.coopController, peerId, [...getConnections()].find(conn => conn.peer === peerId))
@@ -91,5 +95,5 @@ export function registerSessionFeatures(session, {
     canInvite: role !== 'viewer', canManageAccess: role === 'streamer' || role === 'room',
     showToast, coopController: session.services?.coopController
   }) : null;
-  return { plugins, whiteboard, whiteboardUI, soundboard, ping, reactions, clipping, clipEditor, controllerLab, nativeMedia: session.pluginManager.get('native-media') };
+  return { plugins, whiteboard, whiteboardUI, soundboard, ping, reactions, clipping, clipEditor, controllerLab, nativeMedia: session.pluginManager.get('native-media'), roomTools: session.pluginManager.get('room-tools') };
 }

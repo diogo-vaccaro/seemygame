@@ -13,8 +13,11 @@ import { TacticalPingManager } from '../ping.js';
 import { FloatingReactionsManager } from '../reactions.js';
 import { ClipRecorder } from '../clipping.js';
 
+import { RoomToolsPlugin, createRoomToolsPlugin } from './room-tools-plugin.js';
+
 export const createWhiteboardPlugin = (options = {}) => new WhiteboardPlugin({ manager: new WhiteboardManager(), ...options });
 export const createSoundboardPlugin = (options = {}) => new SoundboardPlugin({ manager: new SoundboardManager(), ...options });
 export const createTacticalPingPlugin = (options = {}) => new TacticalPingPlugin({ manager: new TacticalPingManager(), ...options });
 export const createReactionsPlugin = (options = {}) => new ReactionsPlugin({ manager: new FloatingReactionsManager(), ...options });
 export const createClippingPlugin = (options = {}) => new ClippingPlugin({ recorder: new ClipRecorder(), ...options });
+export { createRoomToolsPlugin };
