@@ -3,13 +3,14 @@ import { updateSenderBitrate } from '../webrtc/sender.js';
 /** Conservative browser cap adaptation. Browser congestion control and RTP pacing remain authoritative. */
 export function createQualityController(pc, getSettings, getMeshContext = null) {
   let stopped = false, lastChange = -Infinity, pending = Promise.resolve();
+  const queueBitrate = bps => {
+    pending = pending.catch(() => {}).then(async () => {
+      if (!stopped) await updateSenderBitrate(pc, bps);
+    });
+  };
   const controller = new AdaptiveBitrateController({
     targetBitrateBps: getSettings().bitrateKbps * 1000,
-    onBitrateChange: bps => {
-      pending = pending.catch(() => {}).then(async () => {
-        if (!stopped) await updateSenderBitrate(pc, bps);
-      });
-    }
+    onBitrateChange: queueBitrate
   });
   return {
     get controller() { return controller; },
@@ -28,12 +29,14 @@ export function createQualityController(pc, getSettings, getMeshContext = null) 
         }
       }
 
+      const beforeTarget = controller.currentBitrateBps;
       controller.setTargetBitrate(effectiveTarget);
+      if (beforeTarget !== controller.currentBitrateBps) queueBitrate(controller.currentBitrateBps);
       const enabled = typeof document === 'undefined' || document.getElementById('abr-toggle-btn')?.getAttribute('aria-pressed') !== 'false';
       if (controller.isEnabled !== enabled) controller.setEnabled(enabled);
       if (!enabled || !Number.isFinite(now) || now - lastChange < 3000) return;
       const before = controller.currentBitrateBps;
-      controller.processSample({ ...sample, targetFps: settings.fps });
+      controller.processSample({ ...sample, rttMs: sample.rttMs ?? sample.rtt, targetFps: settings.fps });
       if (before !== controller.currentBitrateBps) lastChange = now;
     },
     dispose() { stopped = true; return pending; }
