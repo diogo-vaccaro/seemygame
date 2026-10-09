@@ -22,6 +22,7 @@ export class RelayManager {
     this.maxDirectViewers = Math.max(1, Number(options.maxDirectViewers) || DEFAULT_MAX_DIRECT_VIEWERS);
     this.onTopologyChange = options.onTopologyChange || null;
     this.onFailover = options.onFailover || null;
+    this.onRouteChange = options.onRouteChange || null;
 
     // Mapa de nós: peerId -> { peerId, role: 'origin'|'direct'|'relay', parentPeerId, children: Set, rtt: number, packetLoss: number }
     this.nodes = new Map();
@@ -209,6 +210,24 @@ export class RelayManager {
     }
 
     if (wasLan !== node.isLan) {
+      const oldParentPeerId = node.parentPeerId;
+      let parentPeerId = oldParentPeerId;
+      let role = node.role;
+      if (node.isLan && node.role === 'relay') {
+        parentPeerId = this.originPeerId;
+        role = 'direct';
+      } else if (!node.isLan && node.role === 'direct' &&
+          this.getDirectNodes().filter(other => other !== node && !other.isLan).length >= this.maxDirectViewers) {
+        const parent = this.electBestRelayParent(peerId);
+        if (parent) { parentPeerId = parent.peerId; role = 'relay'; }
+      }
+      if (parentPeerId !== oldParentPeerId || role !== node.role) {
+        this.nodes.get(oldParentPeerId)?.children.delete(peerId);
+        this.nodes.get(parentPeerId)?.children.add(peerId);
+        node.parentPeerId = parentPeerId;
+        node.role = role;
+        this.onRouteChange?.(peerId, parentPeerId, role, oldParentPeerId);
+      }
       this._emitTopologyChange();
     }
   }

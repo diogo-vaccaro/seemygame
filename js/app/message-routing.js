@@ -233,6 +233,17 @@ export function setupIncomingDataConnection(compatibilityContext, conn) {
     // Sinalização da Árvore P2P Relay (Tree Mesh)
     if (data.type === 'RELAY_FORWARD_REQUEST') {
       const { targetPeerId, hostPeerId } = data;
+      if (conn.peer !== hostPeerId) return;
+      if (data.stop) {
+        compatibilityContext.pendingRelayRequests = compatibilityContext.pendingRelayRequests
+          .filter(request => request.targetPeerId !== targetPeerId || request.hostPeerId !== hostPeerId);
+        const relayCall = compatibilityContext.activeMediaCalls.get(targetPeerId);
+        if (relayCall?.metadata?.hostPeerId === hostPeerId) {
+          compatibilityContext.activeMediaCalls.delete(targetPeerId);
+          try { relayCall.close(); } catch (_) {}
+        }
+        return;
+      }
       console.log(`[RelayTree] Solicitado retransmitir stream de ${hostPeerId} para ${targetPeerId}`);
 
       const streamToRelay = compatibilityContext.savedRemoteStreams.get(hostPeerId) || compatibilityContext.watchingHosts.get(hostPeerId)?.call?.remoteStream;
@@ -256,6 +267,7 @@ export function setupIncomingDataConnection(compatibilityContext, conn) {
 
     if (data.type === 'RELAY_UPSTREAM_ASSIGNED') {
       const { parentPeerId, hostPeerId } = data;
+      if (conn.peer !== hostPeerId) return;
       console.log(`[RelayTree] Atribuído nó pai de relay: ${parentPeerId} para assistir ${hostPeerId}`);
       if (!compatibilityContext.watchingHosts.has(hostPeerId)) {
         compatibilityContext.createPlaceholderCard(hostPeerId, `Amigo ${hostPeerId.slice(0, 6)}`);
@@ -267,6 +279,10 @@ export function setupIncomingDataConnection(compatibilityContext, conn) {
           isRelayed: true,
           relayParentPeerId: parentPeerId
         });
+      } else {
+        const watcher = compatibilityContext.watchingHosts.get(hostPeerId);
+        watcher.isRelayed = parentPeerId !== hostPeerId;
+        watcher.relayParentPeerId = watcher.isRelayed ? parentPeerId : null;
       }
       return;
     }

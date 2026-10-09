@@ -1,3 +1,4 @@
+import { reconcileRelayRoute } from './media-calls.js';
 /** capture-session: commands receive explicit compatibility ports; no page initialization. */
 export async function startLocalStream(compatibilityContext, options = {}) {
   // Prevenção de condições de corrida (duplo clique durante permissão do navegador)
@@ -174,6 +175,7 @@ export async function startLocalStream(compatibilityContext, options = {}) {
           compatibilityContext.roomRelayManager = new compatibilityContext.RelayManager({
             originPeerId: compatibilityContext.peer.id,
             maxDirectViewers: compatibilityContext.DEFAULT_MAX_DIRECT_VIEWERS,
+            onRouteChange: (...args) => reconcileRelayRoute(compatibilityContext, ...args),
             onTopologyChange: (topo) => {
               console.log(`[RelayTree] Topologia atualizada: ${topo.directCount} diretos, ${topo.relayedCount} relays. Total: ${topo.totalViewers}`);
             },

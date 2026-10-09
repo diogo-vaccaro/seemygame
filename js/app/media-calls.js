@@ -1,5 +1,28 @@
 /** media-calls: commands receive explicit compatibility ports; no page initialization. */
 import { createInitialCodecTransform } from '../streaming/codecs.js';
+export function reconcileRelayRoute(context, viewerId, parentId, role, oldParentId) {
+  const hostId = context.peer?.id;
+  if (!hostId || !context.localStream) return;
+  const connection = context.roomManager?.meshConnections?.get(viewerId);
+  if (!connection?.open) return;
+  connection.send({ type: 'RELAY_UPSTREAM_ASSIGNED', parentPeerId: parentId, hostPeerId: hostId });
+  if (oldParentId && oldParentId !== hostId) {
+    context.roomManager?.meshConnections?.get(oldParentId)?.send?.({
+      type: 'RELAY_FORWARD_REQUEST', targetPeerId: viewerId, hostPeerId: hostId, stop: true
+    });
+  }
+  if (role === 'direct') {
+    context.initiateMediaCallToViewer(viewerId);
+  } else {
+    const previous = context.activeMediaCalls.get(viewerId);
+    context.activeMediaCalls.delete(viewerId);
+    try { previous?.close(); } catch (_) {}
+    context.roomManager?.meshConnections?.get(parentId)?.send?.({
+      type: 'RELAY_FORWARD_REQUEST', targetPeerId: viewerId, hostPeerId: hostId
+    });
+  }
+}
+
 export function initiateMediaCallToViewer(compatibilityContext, viewerPeerId) {
   const isNativeActive = Boolean(compatibilityContext.isDesktopApp() && compatibilityContext.activeNativeCaptureProvider?.session?.sessionId);
   if ((!compatibilityContext.localStream && !isNativeActive) || !compatibilityContext.peer) return;
@@ -234,7 +257,11 @@ export function handleIncomingMediaCall(compatibilityContext, call) {
     const pcState = pc?.connectionState;
     const sigState = pc?.signalingState;
     const isAlive = existingIncomingCall.open || pcState === 'connected' || pcState === 'connecting' || sigState === 'stable' || sigState === 'have-remote-offer';
-    if (isAlive) {
+    const watcher = compatibilityContext.watchingHosts.get(originHostId);
+    const expectedPeer = watcher?.relayParentPeerId || originHostId;
+    const switchingUpstream = existingIncomingCall.peer !== call.peer &&
+      (call.peer === expectedPeer || (!isRelayedCall && call.peer === originHostId));
+    if (isAlive && !switchingUpstream) {
       console.log(`[MediaCall] Já existe chamada ativa ou em conexão com ${call.peer} (pcState=${pcState}, sig=${sigState}), descartando chamada duplicada.`);
       try { call.close(); } catch (e) {}
       return;
@@ -246,6 +273,8 @@ export function handleIncomingMediaCall(compatibilityContext, call) {
   if (originHostId) compatibilityContext.activeMediaCalls.set(originHostId, call);
   if (compatibilityContext.watchingHosts.has(originHostId)) {
     compatibilityContext.watchingHosts.get(originHostId).call = call;
+    compatibilityContext.watchingHosts.get(originHostId).isRelayed = isRelayedCall;
+    compatibilityContext.watchingHosts.get(originHostId).relayParentPeerId = isRelayedCall ? call.peer : null;
   }
 
   if (call.peerConnection) {
@@ -328,6 +357,10 @@ export function handleIncomingMediaCall(compatibilityContext, call) {
   });
 
   call.on('close', () => {
+    if (compatibilityContext.watchingHosts.get(originHostId)?.call !== call) {
+      if (compatibilityContext.activeMediaCalls.get(call.peer) === call) compatibilityContext.activeMediaCalls.delete(call.peer);
+      return;
+    }
     compatibilityContext.clipRecorder.stop(call.peer);
     const reactionsDock = document.getElementById('reactions-dock');
     if (reactionsDock && compatibilityContext.watchingHosts.size === 0) reactionsDock.style.display = 'none';
