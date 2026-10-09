@@ -66,4 +66,69 @@ describe('Revisão feat(lan): regressões não cobertas pelo commit', () => {
     const tuned = tuneSdpForGaming(sdp, 30_000_000, { isLan: false });
     expect(tuned).toContain('x-google-min-bitrate=1000');
   });
+
+  it('R1 avançado: transição dinâmica de LAN para WAN aplica teto do Mesh Guard ativo', () => {
+    const abr = new AdaptiveBitrateController({ targetBitrateBps: 30_000_000 });
+    abr.processSample(healthyLan, 'peer-1');
+    abr.applyMeshGuard(3, 8_000_000, 1);
+    expect(abr.getCurrentBitrate('peer-1')).toBe(30_000_000);
+
+    // Peer deixa de ser LAN e cai para WAN (com 1 LAN restante de 3 totais -> 2 WAN -> teto 6 Mbps)
+    abr.processSample(wan, 'peer-1');
+    expect(abr.getCurrentBitrate('peer-1')).toBeLessThanOrEqual(6_000_000);
+  });
+
+  it('R3 avançado: updateTelemetry dispara onTopologyChange quando nó perde condição de LAN', () => {
+    let notified = false;
+    const relay = new RelayManager({
+      originPeerId: 'host',
+      maxDirectViewers: 1,
+      onTopologyChange: () => { notified = true; }
+    });
+    relay.registerViewer('viewer', { rtt: 2, isLan: true });
+    notified = false;
+    relay.updateTelemetry('viewer', { rtt: 50, isLan: false });
+    expect(notified).toBe(true);
+    expect(relay.getDirectNodes()[0].isLan).toBe(false);
+  });
+
+  it('R5: createQualityController aplica Mesh Guard para WAN e isenta LAN', async () => {
+    const { createQualityController } = await import('../js/streaming/adaptation.js');
+    const mockPc = { setParameters: () => Promise.resolve() };
+    const getSettings = () => ({ bitrateKbps: 8000, fps: 60 });
+    const getMeshContext = () => ({ viewerCount: 3, lanViewerCount: 1 });
+
+    const qualityWan = createQualityController(mockPc, getSettings, getMeshContext);
+    qualityWan.process({ timestamp: 1000, isLan: false, packetLossRate: 0, rtt: 40 });
+    // Com 3 espectadores e 1 LAN -> 2 WAN -> teto WAN é 6000 kbps (6 Mbps)
+    expect(qualityWan.controller.currentBitrateBps).toBeLessThanOrEqual(6_000_000);
+
+    const qualityLan = createQualityController(mockPc, getSettings, getMeshContext);
+    qualityLan.process({ timestamp: 1000, isLan: true, packetLossRate: 0, rtt: 2 });
+    // Espectador LAN deve manter os 8 Mbps integrais
+    expect(qualityLan.controller.currentBitrateBps).toBe(8_000_000);
+  });
+
+  it('R5: updateViewerCountUI atualiza contagem e aciona applyMeshGuard calculando espectadores LAN', async () => {
+    const { updateViewerCountUI } = await import('../js/app/session-identity.js');
+    let captured = null;
+    const ctx = {
+      connectedViewers: new Set(['v1', 'v2', 'v3']),
+      viewerCountBadge: { innerHTML: '' },
+      customBitrateBps: 8000000,
+      lastViewerTelemetry: new Map([
+        ['v1', { isLan: true }],
+        ['v2', { isLan: false }],
+        ['v3', { isLan: false }]
+      ]),
+      adaptiveBitrateController: {
+        applyMeshGuard: (total, base, lanCount) => {
+          captured = { total, base, lanCount };
+        }
+      }
+    };
+    updateViewerCountUI(ctx);
+    expect(ctx.viewerCountBadge.innerHTML).toContain('3');
+    expect(captured).toEqual({ total: 3, base: 8000000, lanCount: 1 });
+  });
 });

@@ -108,7 +108,13 @@ export function initiateMediaCallToViewer(compatibilityContext, viewerPeerId) {
     compatibilityContext.activeMediaCalls.set(viewerPeerId, call);
 
     if (call.peerConnection) {
-      compatibilityContext.hookPeerConnectionSdp(call.peerConnection, () => compatibilityContext.customBitrateBps);
+      compatibilityContext.hookPeerConnectionSdp(
+        call.peerConnection,
+        () => compatibilityContext.customBitrateBps,
+        () => ({
+          isLan: Boolean(compatibilityContext.roomRelayManager?.nodes.get(viewerPeerId)?.isLan || compatibilityContext.lastViewerTelemetry?.get(viewerPeerId)?.isLan)
+        })
+      );
       compatibilityContext.applyTransceiverOptimizations(call.peerConnection);
 
       compatibilityContext.startStatsMonitor(viewerPeerId, call.peerConnection, true, (sample) => {

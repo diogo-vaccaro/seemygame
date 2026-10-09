@@ -670,7 +670,11 @@ function sendRoomStream(memberId, conn, rm, session) {
   if (roomState.relayManager) {
     roomState.relayManager.registerViewer(memberId, { rtt: 50 });
   }
-  hookPeerConnectionSdp(call.peerConnection, () => settings.bitrateKbps * 1000);
+  hookPeerConnectionSdp(
+    call.peerConnection,
+    () => settings.bitrateKbps * 1000,
+    () => ({ isLan: Boolean(roomState.relayManager?.nodes.get(memberId)?.isLan) })
+  );
   applyTransceiverOptimizations(call.peerConnection, 'ultra-low', settings.videoCodec || 'h264');
   const stopTuning = applySenderOptimizationsWhenReady(
     call.peerConnection,
@@ -682,7 +686,16 @@ function sendRoomStream(memberId, conn, rm, session) {
     },
     () => (roomState.captureSettings || settings).degradationPreference || 'maintain-resolution'
   );
-  const quality = createQualityController(call.peerConnection, () => roomState.captureSettings || settings);
+  const quality = createQualityController(
+    call.peerConnection,
+    () => roomState.captureSettings || settings,
+    () => {
+      const directNodes = roomState.relayManager?.getDirectNodes() || [];
+      const total = roomState.screenCalls?.size || 1;
+      const lanCount = directNodes.filter(n => n.isLan).length;
+      return { viewerCount: total, lanViewerCount: lanCount };
+    }
+  );
   startStatsMonitor(`send-${memberId}`, call.peerConnection, true, sample => {
     quality.process(sample);
     if (sample && roomState.relayManager) {

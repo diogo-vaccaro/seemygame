@@ -199,12 +199,17 @@ export class RelayManager {
     if (hasFiniteRtt) node.rtt = metrics.rtt;
     if (typeof metrics.packetLoss === 'number' && Number.isFinite(metrics.packetLoss)) node.packetLoss = metrics.packetLoss;
 
+    const wasLan = node.isLan;
     if (metrics.isRelay === true || metrics.isLan === false) {
       node.isLan = false;
     } else if (metrics.isLan === true) {
       node.isLan = true;
     } else if (hasFiniteRtt) {
       node.isLan = metrics.rtt <= 5 && !metrics.isRelay;
+    }
+
+    if (wasLan !== node.isLan) {
+      this._emitTopologyChange();
     }
   }
 

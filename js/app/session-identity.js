@@ -218,9 +218,13 @@ export function submitViewerPin(compatibilityContext, pin) {
 }
 
 export function updateViewerCountUI(compatibilityContext) {
+  const count = compatibilityContext.connectedViewers ? compatibilityContext.connectedViewers.size : 0;
   if (compatibilityContext.viewerCountBadge) {
-    const count = compatibilityContext.connectedViewers.size;
     compatibilityContext.viewerCountBadge.innerHTML = `<span>👥</span> <strong>${count}</strong> ${count === 1 ? 'espectador' : 'espectadores'}`;
+  }
+  if (compatibilityContext.adaptiveBitrateController?.applyMeshGuard) {
+    const lanCount = Array.from(compatibilityContext.lastViewerTelemetry?.values() || []).filter(t => t?.isLan).length;
+    compatibilityContext.adaptiveBitrateController.applyMeshGuard(count, compatibilityContext.customBitrateBps, lanCount);
   }
 }
 

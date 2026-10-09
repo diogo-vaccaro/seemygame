@@ -92,12 +92,14 @@ export class AdaptiveBitrateController {
       this._states.delete(peerId);
       return;
     }
-    const state = this._ensureState('global');
-    state.currentBitrateBps = state.targetBitrateBps;
-    state.minBitrateBps = this._minBitrateBps;
-    state.isLan = false;
-    state.consecutiveBadSamples = 0;
-    state.consecutiveGoodSamples = 0;
+    this._lastMeshGuard = null;
+    for (const [, state] of this._states.entries()) {
+      state.currentBitrateBps = state.targetBitrateBps;
+      state.minBitrateBps = this._minBitrateBps;
+      state.isLan = false;
+      state.consecutiveBadSamples = 0;
+      state.consecutiveGoodSamples = 0;
+    }
   }
 
   /**
@@ -129,6 +131,7 @@ export class AdaptiveBitrateController {
     const count = Math.max(1, Number(viewerCount) || 1);
     const base = baseTargetBps || this._initialTargetBitrateBps;
     const cap = AdaptiveBitrateController.calculateMeshGuardCap(count, base, lanViewerCount);
+    this._lastMeshGuard = { viewerCount: count, baseTargetBps: base, lanViewerCount, cap };
 
     for (const [peerId, state] of this._states.entries()) {
       if (state.isLan) {
@@ -172,6 +175,7 @@ export class AdaptiveBitrateController {
 
     // Classificação da rota (LAN vs WAN/Relay):
     // Rejeição prioritária de TURN/Relay ou negação explícita.
+    const wasLan = state.isLan;
     if (sample.isRelay === true || sample.isLan === false) {
       state.isLan = false;
       state.minBitrateBps = this._minBitrateBps;
@@ -181,6 +185,14 @@ export class AdaptiveBitrateController {
     } else if (rttValid && rawRtt > 25) {
       state.isLan = false;
       state.minBitrateBps = this._minBitrateBps;
+    }
+
+    if (wasLan && !state.isLan && this._lastMeshGuard && state.targetBitrateBps > this._lastMeshGuard.cap) {
+      state.targetBitrateBps = this._lastMeshGuard.cap;
+      if (state.currentBitrateBps > this._lastMeshGuard.cap) {
+        state.currentBitrateBps = this._lastMeshGuard.cap;
+        this._emitBitrateChange(state, peerId);
+      }
     }
 
     const loss = lossValid ? rawLoss : 0;
