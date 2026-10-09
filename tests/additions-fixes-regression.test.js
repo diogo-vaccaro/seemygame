@@ -65,7 +65,7 @@ describe('Configured Redis failures and atomic writes', () => {
     const command = JSON.parse(fetchMock.mock.calls.at(-1)[1].body);
     expect(command[0]).toBe('EVAL');
     expect(command[1]).toContain("secret ~= ARGV[5]");
-    expect(command.slice(2, 5)).toEqual([2, 'smg:room:protected', 'smg:rooms:active']);
+    expect(command.slice(2, 5)).toEqual([3, 'smg:room:protected', 'smg:rooms:active']);
   });
   it('confirms successful atomic save and delete without separate writes', async () => {
     const fetchMock = configureRedis(command => reply(command[0] === 'ZRANGE' ? [] : command[0] === 'EVAL' ? 1 : 0));
