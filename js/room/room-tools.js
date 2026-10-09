@@ -52,7 +52,8 @@ export class RoomToolsController {
       getDisplayName = () => 'Jogador',
       getActiveVideoStream = () => null,
       getVoiceStreams = () => ({}),
-      isHost = null
+      isHost = null,
+      getCoordinatorPeerId = () => null
     } = options;
     this.session = session;
     this.broadcast = broadcast;
@@ -70,6 +71,7 @@ export class RoomToolsController {
     notepadManager.setBroadcast(broadcast);
     notepadManager.getLocalPeerId = getPeerId;
     notepadManager.getDisplayName = getDisplayName;
+    notepadManager.getCoordinatorPeerId = getCoordinatorPeerId;
     const resolveIsHost = () => Boolean(
       (typeof isHost === 'function' ? isHost() : isHost) ||
       session?.isMaster ||

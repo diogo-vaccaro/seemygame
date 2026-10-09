@@ -13,6 +13,7 @@ describe('NotepadManager (Bloco de Notas Colaborativo P2P)', () => {
       broadcast,
       debounceMs: 200,
       getLocalPeerId: () => 'host-1',
+      getCoordinatorPeerId: () => 'host-1',
       getDisplayName: () => 'HostGamer'
     });
   });
@@ -81,7 +82,7 @@ describe('NotepadManager (Bloco de Notas Colaborativo P2P)', () => {
       version: 5,
       lastAuthor: 'HostMaster',
       lastModified: Date.now()
-    });
+    }, 'host-1');
 
     expect(notepad.getText()).toBe('Regras da call atualizadas');
     expect(notepad.version).toBe(5);

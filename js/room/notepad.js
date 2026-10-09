@@ -21,6 +21,8 @@ export class NotepadManager {
     this.broadcast = options.broadcast || null;
     this.getLocalPeerId = options.getLocalPeerId || (() => 'me');
     this.getDisplayName = options.getDisplayName || (() => 'Jogador');
+    this.getCoordinatorPeerId = options.getCoordinatorPeerId || (() => null);
+    this.syncedCoordinatorPeerId = null;
 
     this.debounceMs = options.debounceMs || 300;
     this.debounceTimer = null;
@@ -178,6 +180,13 @@ export class NotepadManager {
         });
       }
     } else if (data.type === 'NOTE_SYNC') {
+      const coordinator = this.getCoordinatorPeerId();
+      if (this.isHost || !coordinator || senderPeerId !== coordinator) return;
+      if (!Number.isSafeInteger(data.version) || data.version < 0) return;
+      if (this.syncedCoordinatorPeerId !== coordinator) {
+        this.version = 0;
+        this.syncedCoordinatorPeerId = coordinator;
+      }
       if (data.version >= this.version || !this.version) {
         this.text = String(data.text ?? '');
         this.version = Number(data.version) || this.version;
@@ -326,6 +335,8 @@ export class NotepadManager {
   }
 
   dispose() {
+    this.getCoordinatorPeerId = () => null;
+    this.syncedCoordinatorPeerId = null;
     if (this.debounceTimer) {
       clearTimeout(this.debounceTimer);
       this.debounceTimer = null;
