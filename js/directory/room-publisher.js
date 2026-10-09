@@ -19,6 +19,7 @@ export class RoomPublisher {
     this.apiBase = options.apiBase || '/api/rooms';
     this.intervalMs = options.intervalMs || HEARTBEAT_INTERVAL_MS;
     this.secretKey = generateSecretKey();
+    this.publicationId = null;
     this.timer = null;
     this.isActive = false;
     this.generation = 0;
@@ -41,9 +42,11 @@ export class RoomPublisher {
    * Inicia o heartbeat de 60s e publica a sala no diretório.
    */
   async start(info = {}) {
+    if (this.isActive) await this.stop();
     const generation = ++this.generation;
     if (this.stopPromise) await this.stopPromise;
     if (generation !== this.generation) return false;
+    this.publicationId = generateSecretKey();
     this.roomInfo = { ...this.roomInfo, ...info };
     if (!this.roomInfo.roomId) {
       console.warn('[RoomPublisher] roomId é obrigatório para publicar.');
@@ -88,7 +91,9 @@ export class RoomPublisher {
       hasPlayer2Slot: Boolean(this.roomInfo.hasPlayer2Slot),
       memberCount: Number(this.roomInfo.memberCount) || 1,
       maxMembers: Number(this.roomInfo.maxMembers) || 8,
-      secretKey: this.secretKey
+      secretKey: this.secretKey,
+      publicationId: this.publicationId,
+      sentAt: Date.now()
     };
 
     try {
@@ -126,6 +131,9 @@ export class RoomPublisher {
 
   _handleUnload() {
     if (!this.isActive || !this.roomInfo.roomId) return;
+    ++this.generation;
+    this.isActive = false;
+    this._stopTimer();
     this.unpublishSync();
   }
 
@@ -135,14 +143,17 @@ export class RoomPublisher {
   unpublishSync() {
     const id = encodeURIComponent(this.roomInfo.roomId);
     const secret = encodeURIComponent(this.secretKey);
-    const payload = JSON.stringify({ id: this.roomInfo.roomId, secretKey: this.secretKey });
+    const publication = encodeURIComponent(this.publicationId || '');
+    const payload = JSON.stringify({ id: this.roomInfo.roomId, secretKey: this.secretKey, publicationId: this.publicationId });
 
     if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
       const blob = new Blob([payload], { type: 'application/json' });
-      navigator.sendBeacon(`${this.apiBase}?action=delete&id=${id}&secret=${secret}`, blob);
-    } else if (typeof fetch !== 'undefined') {
+      const queued = navigator.sendBeacon(`${this.apiBase}?action=delete&id=${id}&secret=${secret}&publication=${publication}`, blob);
+      if (queued) return;
+    }
+    if (typeof fetch !== 'undefined') {
       try {
-        fetch(`${this.apiBase}?id=${id}&secret=${secret}`, {
+        fetch(`${this.apiBase}?id=${id}&secret=${secret}&publication=${publication}`, {
           method: 'DELETE',
           keepalive: true
         }).catch(() => {});
@@ -166,11 +177,12 @@ export class RoomPublisher {
 
     const id = encodeURIComponent(this.roomInfo.roomId);
     const secret = encodeURIComponent(this.secretKey);
+    const publication = encodeURIComponent(this.publicationId || '');
     const pending = [...this.pendingHeartbeats];
     const operation = (async () => {
       await Promise.allSettled(pending);
       try {
-        await fetch(`${this.apiBase}?id=${id}&secret=${secret}`, {
+        await fetch(`${this.apiBase}?id=${id}&secret=${secret}&publication=${publication}`, {
           method: 'DELETE'
         });
       } catch (err) {

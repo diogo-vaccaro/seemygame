@@ -17,17 +17,23 @@
  * - Fallback em memória com expiração por TTL para dev local e testes
  */
 
+import { createHash } from 'node:crypto';
+
 const ROOM_TTL_SECONDS = 90; // 90s TTL (permite tolerância para heartbeat de 60s)
+const RETIRED_TTL_SECONDS = ROOM_TTL_SECONDS * 2;
 const MAX_STORED_ROOMS = 500;
 
 // Armazenamento em memória para dev local e testes
 const memoryRooms = new Map();
+const retiredPublications = new Map();
+const retirementKey = (id, secret, publicationId) => `smg:retired:${createHash('sha256').update(JSON.stringify([id, secret, publicationId])).digest('hex')}`;
 
 /**
  * Limpa o armazenamento em memória (útil em testes unitários).
  */
 export function resetMemoryRooms() {
   memoryRooms.clear();
+  retiredPublications.clear();
 }
 
 /**
@@ -120,6 +126,12 @@ class DirectoryStorageError extends Error {}
 
 // Check ownership and mutate both Redis keys in a single operation.
 const SAVE_ROOM_SCRIPT = `
+if ARGV[6] ~= '' then
+  local clock = redis.call('TIME')
+  local now = tonumber(clock[1]) * 1000 + math.floor(tonumber(clock[2]) / 1000)
+  if now > tonumber(ARGV[7]) then return 0 end
+end
+if ARGV[6] ~= '' and redis.call('EXISTS', KEYS[3]) == 1 then return 0 end
 local raw = redis.call('GET', KEYS[1])
 if raw then
   local existing = cjson.decode(raw)
@@ -131,11 +143,17 @@ redis.call('ZADD', KEYS[2], ARGV[3], ARGV[2])
 return 1
 `;
 const DELETE_ROOM_SCRIPT = `
+if ARGV[3] ~= '' and ARGV[2] ~= '' then redis.call('SET', KEYS[3], '1', 'EX', ARGV[4]) end
 local raw = redis.call('GET', KEYS[1])
+if raw then
+  local existing = cjson.decode(raw)
+  local secret = existing.secretKey
+  if type(secret) == 'string' and secret ~= '' and secret ~= ARGV[2] then return 0 end
+  if ARGV[3] ~= '' and existing.publicationId ~= ARGV[3] then
+    return 0
+  end
+end
 if not raw then return 0 end
-local existing = cjson.decode(raw)
-local secret = existing.secretKey
-if type(secret) == 'string' and secret ~= '' and secret ~= ARGV[2] then return 0 end
 redis.call('DEL', KEYS[1])
 redis.call('ZREM', KEYS[2], ARGV[1])
 return 1
@@ -143,13 +161,16 @@ return 1
 
 // Configured Redis failures are explicit; memory is only used without Redis.
 async function saveRoomToStorage(room) {
+  if (room.publicationId && Date.now() > room.sentAt + ROOM_TTL_SECONDS * 1000) return false;
   const kv = getKvConfig();
   const expiresAt = Date.now() + ROOM_TTL_SECONDS * 1000;
   const roomToStore = { ...room, expiresAt };
 
   if (kv) {
-    const result = await kvCommand(['EVAL', SAVE_ROOM_SCRIPT, 2, `smg:room:${room.id}`, 'smg:rooms:active',
-      JSON.stringify(roomToStore), room.id, expiresAt, ROOM_TTL_SECONDS, room.secretKey || '']);
+    const result = await kvCommand(['EVAL', SAVE_ROOM_SCRIPT, 3, `smg:room:${room.id}`, 'smg:rooms:active',
+      retirementKey(room.id, room.secretKey, room.publicationId),
+      JSON.stringify(roomToStore), room.id, expiresAt, ROOM_TTL_SECONDS, room.secretKey || '', room.publicationId || '',
+      (room.sentAt || 0) + ROOM_TTL_SECONDS * 1000]);
     if (result !== 0 && result !== 1) throw new DirectoryStorageError();
     return result === 1;
   }
@@ -162,6 +183,9 @@ async function saveRoomToStorage(room) {
     }
   }
   const existing = memoryRooms.get(room.id);
+  const now = Date.now();
+  for (const [key, expires] of retiredPublications) if (expires <= now) retiredPublications.delete(key);
+  if (room.publicationId && retiredPublications.has(retirementKey(room.id, room.secretKey, room.publicationId))) return false;
   if (existing?.expiresAt > Date.now() && existing.secretKey && existing.secretKey !== room.secretKey) return false;
   memoryRooms.set(room.id, roomToStore);
   return true;
@@ -196,17 +220,23 @@ async function getRoomsFromStorage() {
   return activeRooms;
 }
 
-async function deleteRoomFromStorage(roomId, secretKey = null) {
+async function deleteRoomFromStorage(roomId, secretKey = null, publicationId = '') {
   const kv = getKvConfig();
 
   if (kv) {
-    const result = await kvCommand(['EVAL', DELETE_ROOM_SCRIPT, 2, `smg:room:${roomId}`, 'smg:rooms:active', roomId, secretKey || '']);
+    const result = await kvCommand(['EVAL', DELETE_ROOM_SCRIPT, 3, `smg:room:${roomId}`, 'smg:rooms:active',
+      retirementKey(roomId, secretKey, publicationId), roomId, secretKey || '', publicationId, RETIRED_TTL_SECONDS]);
     if (result !== 0 && result !== 1) throw new DirectoryStorageError();
     return result === 1;
   }
 
   // Fallback in-memory
   const existing = memoryRooms.get(roomId);
+  if (publicationId && secretKey) {
+    retiredPublications.set(retirementKey(roomId, secretKey, publicationId), Date.now() + RETIRED_TTL_SECONDS * 1000);
+    if (existing && existing.publicationId !== publicationId) return false;
+  }
+  if (existing?.secretKey && existing.secretKey !== secretKey) return false;
   if (existing) {
     if (existing.secretKey && existing.secretKey !== secretKey) {
       return false;
@@ -282,18 +312,23 @@ async function handleRequest(req, res) {
   if (req.method === 'DELETE' || (req.method === 'POST' && actionParam === 'delete')) {
     let roomId = url.searchParams.get('id');
     let secretKey = url.searchParams.get('secret');
+    let publicationId = url.searchParams.get('publication') || '';
 
     if (!roomId) {
       const body = await parseJsonBody(req);
       roomId = body.id || body.roomId;
       secretKey = body.secretKey || body.secret || secretKey;
+      publicationId = body.publicationId || publicationId;
     }
 
     if (!roomId) {
       return res.status(400).json({ error: 'ID da sala obrigatório para remoção.' });
     }
 
-    const deleted = await deleteRoomFromStorage(roomId, secretKey);
+    if (!/^[a-z0-9_-]{1,40}$/.test(roomId) || (publicationId && !/^[a-zA-Z0-9_-]{1,100}$/.test(publicationId))) {
+      return res.status(400).json({ error: 'Identificador inválido.' });
+    }
+    const deleted = await deleteRoomFromStorage(roomId, secretKey, publicationId);
     return res.status(200).json({ ok: true, deleted });
   }
 
@@ -368,6 +403,12 @@ async function handleRequest(req, res) {
 
     const geo = parseGeolocation(req, body);
     const now = Date.now();
+    const publicationId = body.publicationId || '';
+    if (publicationId && (typeof publicationId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(publicationId) ||
+      typeof body.secretKey !== 'string' || !body.secretKey || !Number.isSafeInteger(body.sentAt) ||
+      body.sentAt < now - ROOM_TTL_SECONDS * 1000 || body.sentAt > now + 30_000)) {
+      return res.status(400).json({ error: 'Publicação inválida ou expirada.' });
+    }
 
     // Verifica se a sala já existe para verificar secretKey se configurada
     const existingList = await getRoomsFromStorage();
@@ -386,6 +427,8 @@ async function handleRequest(req, res) {
       memberCount: Math.max(1, Math.min(32, Number(body.memberCount) || 1)),
       maxMembers: Math.max(2, Math.min(32, Number(body.maxMembers) || 8)),
       secretKey: body.secretKey || existing?.secretKey || null,
+      publicationId,
+      sentAt: publicationId ? body.sentAt : null,
       ...geo,
       createdAt: existing?.createdAt || now,
       updatedAt: now
