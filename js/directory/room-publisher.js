@@ -21,6 +21,9 @@ export class RoomPublisher {
     this.secretKey = generateSecretKey();
     this.timer = null;
     this.isActive = false;
+    this.generation = 0;
+    this.pendingHeartbeats = new Set();
+    this.stopPromise = null;
     this.roomInfo = {
       roomId: '',
       title: '',
@@ -38,6 +41,9 @@ export class RoomPublisher {
    * Inicia o heartbeat de 60s e publica a sala no diretório.
    */
   async start(info = {}) {
+    const generation = ++this.generation;
+    if (this.stopPromise) await this.stopPromise;
+    if (generation !== this.generation) return false;
     this.roomInfo = { ...this.roomInfo, ...info };
     if (!this.roomInfo.roomId) {
       console.warn('[RoomPublisher] roomId é obrigatório para publicar.');
@@ -56,6 +62,7 @@ export class RoomPublisher {
     await this.sendHeartbeat();
 
     // Inicia intervalo de heartbeat a cada 60s
+    if (!this.isActive || generation !== this.generation) return false;
     this._startTimer();
     return true;
   }
@@ -85,14 +92,16 @@ export class RoomPublisher {
     };
 
     try {
-      const response = await fetch(this.apiBase, {
+      const operation = fetch(this.apiBase, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json'
         },
         body: JSON.stringify(payload)
       });
-      return response.ok;
+      this.pendingHeartbeats.add(operation);
+      try { return (await operation).ok; }
+      finally { this.pendingHeartbeats.delete(operation); }
     } catch (err) {
       console.warn('[RoomPublisher] Falha ao enviar heartbeat:', err);
       return false;
@@ -145,7 +154,8 @@ export class RoomPublisher {
    * Interrompe o heartbeat e despublica a sala do diretório.
    */
   async stop() {
-    if (!this.isActive) return;
+    ++this.generation;
+    if (!this.isActive) return this.stopPromise;
     this.isActive = false;
     this._stopTimer();
 
@@ -154,9 +164,11 @@ export class RoomPublisher {
       window.removeEventListener('beforeunload', this._onUnload);
     }
 
-    if (this.roomInfo.roomId) {
-      const id = encodeURIComponent(this.roomInfo.roomId);
-      const secret = encodeURIComponent(this.secretKey);
+    const id = encodeURIComponent(this.roomInfo.roomId);
+    const secret = encodeURIComponent(this.secretKey);
+    const pending = [...this.pendingHeartbeats];
+    const operation = (async () => {
+      await Promise.allSettled(pending);
       try {
         await fetch(`${this.apiBase}?id=${id}&secret=${secret}`, {
           method: 'DELETE'
@@ -164,7 +176,10 @@ export class RoomPublisher {
       } catch (err) {
         console.warn('[RoomPublisher] Falha ao despublicar sala:', err);
       }
-    }
+    })();
+    this.stopPromise = operation;
+    try { await operation; }
+    finally { if (this.stopPromise === operation) this.stopPromise = null; }
   }
 
   dispose() {
